@@ -1,9 +1,9 @@
-from loader import Load_PDF
+from .loader import Load_PDF
 from pathlib import Path
-from chunker import Chunk_Txt
-from embedder import Create_embeddings
-from vector_store import (Create_vector_store , Save_vector_store ,Load_vector_store , Add_to_vector_store)
-from document_tracker import (Document_status , Load_document_metadata , Save_document_metadata)
+from .chunker import Chunk_Txt
+from .embedder import Create_embeddings
+from .vector_store import (Create_vector_store , Save_vector_store ,Load_vector_store , Add_to_vector_store)
+from .document_tracker import (Document_status , Load_document_metadata , Save_document_metadata)
 
 DOCUMENTS_DIR = Path("Data/Documents")
 

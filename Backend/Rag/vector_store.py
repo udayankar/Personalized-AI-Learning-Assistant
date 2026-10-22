@@ -61,9 +61,9 @@ def Add_to_vector_store(index, chunks, new_chunks, new_embeddings):
 
 if __name__ == "__main__":
 
-    from loader import Load_PDF
-    from chunker import Chunk_Txt
-    from embedder import Create_embeddings, model
+    from .loader import Load_PDF
+    from .chunker import Chunk_Txt
+    from .embedder import Create_embeddings, model
 
     pages = Load_PDF("Data/Documents/opencv-notes.pdf")
 

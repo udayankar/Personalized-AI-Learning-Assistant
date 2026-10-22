@@ -1,6 +1,6 @@
-from vector_store import (Load_vector_store,Retrieve)
-from embedder import model
-from generator import Generate_answer
+from .vector_store import (Load_vector_store,Retrieve)
+from .embedder import model
+from .generator import Generate_answer
 
 def Ask_question(question):
     index, chunks = Load_vector_store()

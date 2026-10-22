@@ -3,7 +3,7 @@ from jwt.exceptions import InvalidTokenError
 from fastapi import status , Depends , HTTPException , Cookie , Request
 from sqlalchemy.orm import Session
 from datetime import datetime , UTC , timedelta
-from App import models
+from . import models
 from .database import get_db
 from dotenv import load_dotenv
 import os

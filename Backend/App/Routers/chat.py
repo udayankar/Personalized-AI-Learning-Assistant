@@ -1,5 +1,5 @@
 from fastapi import APIRouter , Response , HTTPException , status
-from schemas import Query_Chat , Query_Ans
+from ..schemas import Query_Chat , Query_Ans
 from Rag.rag import Ask_question
 
 router = APIRouter(prefix="/chat" , tags=["Chat"])
@@ -7,7 +7,7 @@ router = APIRouter(prefix="/chat" , tags=["Chat"])
 @router.post("/query" , response_model=Query_Ans)
 async def Give_Query(payload : Query_Chat) :
     try : 
-        answer, results = Ask_question(payload.query) 
+        answer , results = Ask_question(payload.query) 
         if answer :
             return {
                 "answer": answer,

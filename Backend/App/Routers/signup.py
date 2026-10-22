@@ -8,8 +8,8 @@ from .. import models
 
 router = APIRouter(prefix="/users" , tags=["Users"])
 
-@router.post("/signup" , response_model=schemas.ReturnSignupUser )
-async def SignupUser(payload : schemas.SignupUser , response : Response , db : Session=Depends(get_db)):
+@router.post("/signup" , response_model=schemas.Return_Signup_User )
+async def SignupUser(payload : schemas.Signup_User , response : Response , db : Session=Depends(get_db)):
     existing =  db.execute(select(models.User).where(models.User.Email == payload.Email)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT , detail="Email already registered")

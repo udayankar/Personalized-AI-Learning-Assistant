@@ -10,7 +10,7 @@ from .. import models
 router = APIRouter(prefix="/users")
 
 @router.post("/login")
-async def login(userinfo : schemas.LoginUser , response : Response , db : Session = Depends(get_db)):
+async def login(userinfo : schemas.Login_User , response : Response , db : Session = Depends(get_db)):
     user = db.execute(select(models.User).where(models.User.Email == userinfo.Email)).scalar_one_or_none()
     if user == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Wrong info")
@@ -26,7 +26,7 @@ async def login(userinfo : schemas.LoginUser , response : Response , db : Sessio
     )
     return {"message":"Login successful"}
 
-@router.get("/me" , response_model=schemas.ReturnSignupUser)
+@router.get("/me" , response_model=schemas.Return_Signup_User)
 def me(current_user = Depends(get_current_user)):
     return current_user
 
