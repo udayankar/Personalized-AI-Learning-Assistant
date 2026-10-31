@@ -1,0 +1,48 @@
+/* EmptyState.module.css */
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-12) var(--space-6);
+  background-color: var(--color-white);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+}
+
+.iconWrap {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-xl);
+  background-color: var(--color-navy-100);
+  color: var(--color-navy-800);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-navy-800);
+  margin-bottom: var(--space-2);
+}
+
+.description {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  max-width: 420px;
+  line-height: var(--line-height-relaxed);
+  margin-bottom: var(--space-5);
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

@@ -1,0 +1,10 @@
+/* ============================================================
+   PublicLayout.module.css
+   Shared layout shell for all public-facing pages
+   ============================================================ */
+
+/* ── Main content area ──────────────────────────────────────── */
+.main {
+  min-height: calc(100vh - var(--header-height) - 220px);
+  background-color: var(--color-cream-50);
+}

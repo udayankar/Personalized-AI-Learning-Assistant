@@ -1,0 +1,115 @@
+/* TextInput.module.css */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.label {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-navy-800);
+  line-height: var(--line-height-tight);
+}
+
+.required {
+  color: var(--color-error-700);
+  margin-left: 2px;
+}
+
+/* Wrapper holds input + any trailing icon/button */
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-primary);
+  background-color: #ffffff;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  line-height: var(--line-height-normal);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+  box-sizing: border-box;
+}
+
+/* Make room for trailing icon when present */
+.input.hasTrailing {
+  padding-right: 2.75rem;
+}
+
+.input::placeholder {
+  color: var(--color-text-subtle);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-amber-600);
+  box-shadow: 0 0 0 3px var(--color-amber-ring);
+}
+
+/* Error state */
+.input.error {
+  border-color: var(--color-error-700);
+}
+
+.input.error:focus {
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.15);
+}
+
+/* Disabled */
+.input:disabled {
+  background-color: var(--color-cream-200);
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
+}
+
+/* Trailing icon / button slot */
+.trailing {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.trailing:focus-visible {
+  outline: 2px solid var(--color-amber-600);
+  border-radius: var(--radius-sm);
+}
+
+/* Hint / helper text */
+.hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-normal);
+}
+
+/* Error message */
+.errorMsg {
+  font-size: var(--text-xs);
+  color: var(--color-error-700);
+  line-height: var(--line-height-normal);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}

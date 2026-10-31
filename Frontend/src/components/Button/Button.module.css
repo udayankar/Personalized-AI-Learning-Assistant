@@ -1,0 +1,139 @@
+/* Button.module.css */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--text-sm);
+  line-height: 1;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--color-amber-600);
+  outline-offset: 2px;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* ── Sizes ─────────────────────────────────────────── */
+
+.sm {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
+}
+
+.md {
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.lg {
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--text-base);
+  border-radius: var(--radius-lg);
+}
+
+/* ── Variants ──────────────────────────────────────── */
+
+/* Primary: amber CTA */
+.primary {
+  background-color: var(--color-amber-600);
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(217, 119, 6, 0.3);
+}
+
+.primary:hover:not(:disabled) {
+  background-color: var(--color-amber-500);
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.35);
+}
+
+.primary:active:not(:disabled) {
+  background-color: var(--color-amber-700);
+  box-shadow: none;
+}
+
+/* Secondary: navy outline */
+.secondary {
+  background-color: transparent;
+  color: var(--color-navy-800);
+  border: 2px solid var(--color-navy-800);
+}
+
+.secondary:hover:not(:disabled) {
+  background-color: var(--color-navy-800);
+  color: var(--color-text-inverse);
+}
+
+/* Ghost: minimal */
+.ghost {
+  background-color: transparent;
+  color: var(--color-navy-800);
+}
+
+.ghost:hover:not(:disabled) {
+  background-color: var(--color-cream-200);
+}
+
+/* Danger */
+.danger {
+  background-color: var(--color-error-700);
+  color: #ffffff;
+}
+
+.danger:hover:not(:disabled) {
+  background-color: #991b1b;
+}
+
+/* ── States ────────────────────────────────────────── */
+
+.fullWidth {
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Spinner ───────────────────────────────────────── */
+
+.spinner {
+  width: 1em;
+  height: 1em;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Spinner colour on non-white-bg variants */
+.secondary .spinner,
+.ghost .spinner {
+  border-color: rgba(26, 54, 93, 0.2);
+  border-top-color: var(--color-navy-800);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

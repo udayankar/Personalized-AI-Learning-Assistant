@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.parcel-cache/
+.env
+.env.local
+.env.production
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+coverage/
+.env.*
+!.env.example
