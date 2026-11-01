@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime , UTC , timedelta
 from . import models
 from .database import get_db
+from .csrf import SAFE_METHODS , validate_csrf_request
 from dotenv import load_dotenv
 import os
 
@@ -31,7 +32,7 @@ def verify_token(token : str , error):
     except InvalidTokenError:
         raise error
 
-def get_current_user(access_token: str = Cookie(None) , db : Session = Depends(get_db)):
+def get_current_user(request : Request , access_token : str = Cookie(None) , db : Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -43,6 +44,11 @@ def get_current_user(access_token: str = Cookie(None) , db : Session = Depends(g
     user = db.query(models.User).filter(models.User.Email == email).first()
     if user is None:
         raise credentials_exception
+    if request.method.upper() not in SAFE_METHODS:
+        validate_csrf_request(
+            request,
+            settings=getattr(request.app.state, "csrf_settings", None),
+        )
     return user
 
 def get_current_user_optional(request: Request , db: Session = Depends(get_db)):

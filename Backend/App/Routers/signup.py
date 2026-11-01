@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..utils import hashed_password
 from .. import models
+from ..csrf import require_csrf
 
 router = APIRouter(prefix="/users" , tags=["Users"])
 
 @router.post("/signup" , response_model=schemas.Return_Signup_User )
-async def SignupUser(payload : schemas.Signup_User , response : Response , db : Session=Depends(get_db)):
+async def SignupUser(payload : schemas.Signup_User , response : Response , db : Session=Depends(get_db), _csrf=Depends(require_csrf)):
     existing =  db.execute(select(models.User).where(models.User.Email == payload.Email)).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT , detail="Email already registered")

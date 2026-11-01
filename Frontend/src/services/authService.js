@@ -14,7 +14,7 @@
  *       The frontend handles post-signup login explicitly.
  */
 
-import apiClient from './apiClient';
+import apiClient, { clearCsrfToken, setCsrfToken } from './apiClient';
 
 /**
  * Register a new user account.
@@ -34,6 +34,7 @@ export async function signup({ Name, Email, Password }) {
  */
 export async function login({ Email, Password }) {
   const response = await apiClient.post('/users/login', { Email, Password });
+  setCsrfToken(response.data.csrf_token);
   return response.data;
 }
 
@@ -59,6 +60,10 @@ export async function getMe() {
  * @returns {Promise<{ message: string }>}
  */
 export async function logout() {
-  const response = await apiClient.post('/users/logout');
-  return response.data;
+  try {
+    const response = await apiClient.post('/users/logout');
+    return response.data;
+  } finally {
+    clearCsrfToken();
+  }
 }

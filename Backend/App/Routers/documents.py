@@ -1,7 +1,8 @@
 from pathlib import Path
 from uuid import uuid4
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends
 from starlette.concurrency import run_in_threadpool
+from ..oauth2 import get_current_user
 from Rag.ingest import Build_rag
 
 router = APIRouter(prefix="/documents",tags=["Documents"])
@@ -11,7 +12,7 @@ DOCUMENTS_DIR = BASE_DIR / "Data" / "Documents"
 DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def Upload_Document(file: UploadFile = File(...)):
+async def Upload_Document(file: UploadFile = File(...), current_user = Depends(get_current_user)):
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="No file provided")
     if Path(file.filename).suffix.lower() != ".pdf":
@@ -27,6 +28,10 @@ async def Upload_Document(file: UploadFile = File(...)):
             while chunk := await file.read(1024 * 1024):
                 buffer.write(chunk)
         await run_in_threadpool(Build_rag)
+    except HTTPException:
+        if file_path.exists():
+            file_path.unlink()
+        raise
     except Exception:
         if file_path.exists():
             file_path.unlink()

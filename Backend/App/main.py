@@ -1,18 +1,11 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from .Routers import chat , documents , auth , signup
 from .database import Base , engine
 from . import models
+from .csrf import configure_csrf_protection
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:1234"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept"],
-)
+configure_csrf_protection(app)
 
 Base.metadata.create_all(bind=engine)
 
