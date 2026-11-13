@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..oauth2 import create_access_token , get_current_user
 from ..config import get_security_settings
-from ..csrf import (CSRF_COOKIE_NAME , PREAUTH_COOKIE_NAME , issue_csrf_token ,require_csrf , token_is_valid,)
+from ..csrf import (CSRF_COOKIE_NAME , PREAUTH_COOKIE_NAME , issue_csrf_token , require_csrf , token_is_valid,)
 import secrets
 from ..database import get_db
 from ..utils import verify_password
@@ -19,7 +19,7 @@ async def login(userinfo : schemas.Login_User , response : Response , request: R
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Wrong info")
     if not verify_password(userinfo.Password , user.Password):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Incorect Password")
-    token = create_access_token({"Email" : user.Email})
+    token = create_access_token(str(user.ID))
     settings = getattr(request.app.state, "csrf_settings", None) or get_security_settings()
     response.set_cookie(
         key="access_token",

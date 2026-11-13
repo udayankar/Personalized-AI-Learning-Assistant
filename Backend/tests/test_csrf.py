@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
+import jwt
 from fastapi.testclient import TestClient
 
 TEST_SECRET = "task-two-csrf-test-secret-32-bytes-minimum"
@@ -32,24 +33,30 @@ class FakeResult:
         return self.user
 
 class FakeQuery:
-    def __init__(self, user):
-        self.user = user
+    def __init__(self, users):
+        self.users = users
 
-    def filter(self, *_args):
-        return self
+    def filter(self, *criteria):
+        users = self.users
+        for criterion in criteria:
+            field = criterion.left.key
+            expected = criterion.right.value
+            users = [user for user in users if getattr(user, field) == expected]
+        return FakeQuery(users)
 
     def first(self):
-        return self.user
+        return self.users[0] if self.users else None
 
 class FakeDB:
-    def __init__(self, user):
-        self.user = user
+    def __init__(self, *users):
+        self.users = users
+        self.user = users[0]
         self.execute_count = 0
         self.add_count = 0
         self.commit_count = 0
 
     def query(self, *_args):
-        return FakeQuery(self.user)
+        return FakeQuery(list(self.users))
 
     def execute(self, *_args):
         self.execute_count += 1
@@ -88,7 +95,14 @@ class CsrfProtectionTests(unittest.TestCase):
             Password="hashed-password",
             Created_at=datetime.now(UTC),
         )
-        self.db = FakeDB(self.user)
+        self.other_user = types.SimpleNamespace(
+            ID=8,
+            Name="Other Student",
+            Email="other@example.com",
+            Password="hashed-password",
+            Created_at=datetime.now(UTC),
+        )
+        self.db = FakeDB(self.user, self.other_user)
         with patch.object(Base.metadata, "create_all"):
             from App.main import app as configured_app
         self.app = configured_app
@@ -180,7 +194,7 @@ class CsrfProtectionTests(unittest.TestCase):
         token, _ = self._login()
         self.client.cookies.set(
             "access_token",
-            oauth2.create_access_token({"Email": "other@example.com"}),
+            oauth2.create_access_token(str(self.other_user.ID)),
         )
         response = self.client.post(
             "/chat/query",
@@ -189,6 +203,12 @@ class CsrfProtectionTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.ask_question.assert_not_called()
+
+    def test_client_supplied_user_id_does_not_override_jwt_subject(self):
+        self._login()
+        response = self.client.get("/users/me?user_id=8&ID=8")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ID"], self.user.ID)
 
     def test_unauthorized_origin_is_rejected_even_with_valid_token(self):
         token, _ = self._login()
@@ -260,6 +280,13 @@ class CsrfProtectionTests(unittest.TestCase):
         )
         self.assertEqual(login_response.status_code, 200)
         self.assertIsNotNone(self.client.cookies.get("access_token"))
+        claims = jwt.decode(
+            self.client.cookies.get("access_token"),
+            oauth2.SECRET_KEY,
+            algorithms=[oauth2.ALGORITHM],
+        )
+        self.assertEqual(claims["sub"], str(self.user.ID))
+        self.assertNotIn("Email", claims)
         cookie_headers = login_response.headers.get_list("set-cookie")
         access_cookie = next(value.lower() for value in cookie_headers if value.startswith("access_token="))
         csrf_cookie = next(value.lower() for value in cookie_headers if value.startswith("csrf_token="))
@@ -445,7 +472,7 @@ class CsrfProtectionTests(unittest.TestCase):
         app.include_router(chat.router)
         app.dependency_overrides[get_db] = lambda: self.db
         client = TestClient(app, raise_server_exceptions=False)
-        valid_jwt = oauth2.create_access_token({"Email": self.user.Email})
+        valid_jwt = oauth2.create_access_token(str(self.user.ID))
         with patch.dict(os.environ, {"APP_ENV": "test", "SECRET_KEY": oauth2.SECRET_KEY,
                                     "CSRF_SECRET_KEY": "", "CORS_ALLOWED_ORIGINS": FRONTEND_ORIGIN}, clear=True):
             response = client.post(

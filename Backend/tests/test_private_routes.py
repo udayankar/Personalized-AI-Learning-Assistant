@@ -9,34 +9,40 @@ from unittest.mock import Mock, patch
 import jwt
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 rag_stub = types.ModuleType("Rag.rag")
 rag_stub.Ask_question = Mock()
 ingest_stub = types.ModuleType("Rag.ingest")
 ingest_stub.Build_rag = Mock()
 with patch.dict(sys.modules, {"Rag.rag": rag_stub, "Rag.ingest": ingest_stub}):
-    from App.Routers import chat, documents
+    from App.Routers import auth, chat, documents
     from App import oauth2
     from App.database import get_db
     from App.csrf import configure_csrf_protection, create_csrf_token
 
 class FakeQuery:
-    def __init__(self, user):
-        self.user = user
+    def __init__(self, users):
+        self.users = users
 
-    def filter(self, *_args):
-        return self
+    def filter(self, *criteria):
+        users = self.users
+        for criterion in criteria:
+            field = criterion.left.key
+            expected = criterion.right.value
+            users = [user for user in users if getattr(user, field) == expected]
+        return FakeQuery(users)
 
     def first(self):
-        return self.user
+        return self.users[0] if self.users else None
 
 
 class FakeDB:
-    def __init__(self, user):
-        self.user = user
+    def __init__(self, *users):
+        self.users = users
 
     def query(self, *_args):
-        return FakeQuery(self.user)
+        return FakeQuery(list(self.users))
 
 
 class PrivateRouteAuthenticationTests(unittest.TestCase):
@@ -54,10 +60,21 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.app = FastAPI()
         self.app.include_router(chat.router)
         self.app.include_router(documents.router)
+        self.app.include_router(auth.router)
         configure_csrf_protection(self.app)
-        self.app.dependency_overrides[get_db] = lambda: FakeDB(
-            types.SimpleNamespace(Email="student@example.com")
+        self.user = types.SimpleNamespace(
+            ID=7,
+            Name="Test Student",
+            Email="student@example.com",
+            Created_at=datetime.now(UTC),
         )
+        self.other_user = types.SimpleNamespace(
+            ID=8,
+            Name="Other Student",
+            Email="other@example.com",
+            Created_at=datetime.now(UTC),
+        )
+        self.app.dependency_overrides[get_db] = lambda: FakeDB(self.user, self.other_user)
         self.client = TestClient(self.app)
         self.temp_dir = TemporaryDirectory(dir=os.getcwd())
         self.documents_dir_patch = patch.object(
@@ -75,7 +92,7 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
 
     def _token(self, payload=None, key=None):
         return jwt.encode(
-            payload or {"Email": "student@example.com", "exp": datetime.now(UTC) + timedelta(minutes=5)},
+            payload or {"sub": "7", "exp": datetime.now(UTC) + timedelta(minutes=5)},
             key or oauth2.SECRET_KEY,
             algorithm=oauth2.ALGORITHM,
         )
@@ -109,8 +126,9 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.assertEqual(list(Path(self.temp_dir.name).iterdir()), [])
 
     def test_missing_malformed_invalid_signature_and_expired_tokens_are_rejected(self):
+        future_expiry = datetime.now(UTC) + timedelta(minutes=5)
         expired = self._token(
-            {"Email": "student@example.com", "exp": datetime.now(UTC) - timedelta(minutes=1)}
+            {"sub": "7", "exp": datetime.now(UTC) - timedelta(minutes=1)}
         )
         invalid_signature = self._token(key="a-different-signing-secret")
         cases = [
@@ -118,6 +136,13 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
             ("malformed", "not-a-jwt"),
             ("invalid signature", invalid_signature),
             ("expired", expired),
+            ("missing subject", self._token({"exp": future_expiry})),
+            ("email-only legacy token", self._token({"Email": "student@example.com", "exp": future_expiry})),
+            ("malformed subject", self._token({"sub": "not-an-id", "exp": future_expiry})),
+            ("non-string subject", self._token({"sub": 7, "exp": future_expiry})),
+            ("zero subject", self._token({"sub": "0", "exp": future_expiry})),
+            ("negative subject", self._token({"sub": "-7", "exp": future_expiry})),
+            ("nonexistent user", self._token({"sub": "999", "exp": future_expiry})),
         ]
         for label, token in cases:
             with self.subTest(token=label):
@@ -127,6 +152,53 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 401)
         self.ask_question_mock.assert_not_called()
+
+    def test_token_creation_accepts_only_a_positive_user_id_and_uses_sub(self):
+        token = oauth2.create_access_token("7")
+        claims = jwt.decode(token, oauth2.SECRET_KEY, algorithms=[oauth2.ALGORITHM])
+        self.assertEqual(claims["sub"], "7")
+        self.assertNotIn("Email", claims)
+        for invalid_user_id in ("0", "07", "-7", "not-an-id", {"sub": "8"}):
+            with self.subTest(user_id=invalid_user_id):
+                with self.assertRaises(ValueError):
+                    oauth2.create_access_token(invalid_user_id)
+
+    def test_optional_current_user_uses_subject_and_rejects_legacy_email_tokens(self):
+        def request_with_cookie(token):
+            return Request({
+                "type": "http",
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/",
+                "raw_path": b"/",
+                "query_string": b"",
+                "headers": [(b"cookie", f"access_token={token}".encode())],
+                "server": ("testserver", 80),
+                "client": ("testclient", 50000),
+                "root_path": "",
+            })
+
+        authenticated = oauth2.get_current_user_optional(
+            request_with_cookie(self._token()), FakeDB(self.user, self.other_user)
+        )
+        legacy_token = self._token({
+            "Email": self.user.Email,
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+        })
+        legacy = oauth2.get_current_user_optional(
+            request_with_cookie(legacy_token), FakeDB(self.user, self.other_user)
+        )
+        self.assertIs(authenticated, self.user)
+        self.assertIsNone(legacy)
+
+    def test_authenticated_identity_comes_from_jwt_subject_not_request_ids(self):
+        response = self.client.get(
+            "/users/me?user_id=8",
+            cookies={"access_token": self._token()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ID"], 7)
 
     def test_valid_authenticated_chat_reaches_existing_logic(self):
         cookies, csrf = self._auth_cookies()
