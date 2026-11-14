@@ -2,6 +2,7 @@ import sys
 import types
 import unittest
 import os
+from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -20,6 +21,7 @@ with patch.dict(sys.modules, {"Rag.rag": rag_stub, "Rag.ingest": ingest_stub}):
     from App import oauth2
     from App.database import get_db
     from App.csrf import configure_csrf_protection, create_csrf_token
+    from Rag import user_storage
 
 class FakeQuery:
     def __init__(self, users):
@@ -77,11 +79,16 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.app.dependency_overrides[get_db] = lambda: FakeDB(self.user, self.other_user)
         self.client = TestClient(self.app)
         self.temp_dir = TemporaryDirectory(dir=os.getcwd())
-        self.documents_dir_patch = patch.object(
-            documents, "DOCUMENTS_DIR", Path(self.temp_dir.name)
+        self.documents_root_patch = patch.object(
+            user_storage, "DOCUMENTS_ROOT", Path(self.temp_dir.name) / "documents"
         )
-        self.documents_dir_patch.start()
-        self.addCleanup(self.documents_dir_patch.stop)
+        self.storage_root_patch = patch.object(
+            user_storage, "STORAGE_ROOT", Path(self.temp_dir.name) / "storage"
+        )
+        self.documents_root_patch.start()
+        self.storage_root_patch.start()
+        self.addCleanup(self.documents_root_patch.stop)
+        self.addCleanup(self.storage_root_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
         self.ask_question = patch.object(chat, "Ask_question", return_value=("Answer", []))
         self.build_rag = patch.object(documents, "Build_rag")
@@ -97,11 +104,12 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
             algorithm=oauth2.ALGORITHM,
         )
 
-    def _upload(self, cookies=None):
+    def _upload(self, cookies=None, data=None):
         headers = self._csrf_headers(cookies) if cookies else None
         return self.client.post(
             "/documents/upload",
             files={"file": ("notes.pdf", b"%PDF-test", "application/pdf")},
+            data=data,
             cookies=cookies,
             headers=headers,
         )
@@ -204,21 +212,69 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         cookies, csrf = self._auth_cookies()
         response = self.client.post(
             "/chat/query",
-            json={"query": "Explain this"},
+            json={"query": "Explain this", "user_id": 8},
             cookies=cookies,
             headers=self._csrf_headers(cookies),
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"answer": "Answer", "sources": []})
-        self.ask_question_mock.assert_called_once_with("Explain this")
+        self.assertEqual(response.json(), {
+            "answer": "Answer",
+            "answer_mode": "INSUFFICIENT_CONFIDENCE",
+            "message": None,
+            "reliability": "LOW",
+            "conflict_status": "NONE",
+            "fallback_reason": None,
+            "claims": [],
+            "sources": [],
+        })
+        self.ask_question_mock.assert_called_once_with("Explain this", 7)
+
+    def test_chat_response_exposes_answer_mode_and_citations(self):
+        cookies, _ = self._auth_cookies()
+        self.ask_question_mock.return_value = SimpleNamespace(
+            answer="Grounded answer",
+            answer_mode="DOCUMENT_SUPPORTED",
+            message=None,
+            reliability="HIGH",
+            conflict_status="NONE",
+            fallback_reason=None,
+            claims=[{
+                "text": "Grounded answer",
+                "classification": "SUPPORTED",
+                "sources": [{
+                    "reference": "passage-abc123", "source": "notes.pdf", "page": 3,
+                    "text": "Retrieved passage",
+                }],
+            }],
+            sources=[{
+                "reference": "passage-abc123",
+                "source": "notes.pdf",
+                "page": 3,
+                "text": "Retrieved passage",
+            }],
+        )
+
+        response = self.client.post(
+            "/chat/query", json={"query": "Explain this"},
+            cookies=cookies, headers=self._csrf_headers(cookies),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["answer_mode"], "DOCUMENT_SUPPORTED")
+        self.assertEqual(response.json()["reliability"], "HIGH")
+        self.assertEqual(response.json()["sources"][0]["reference"], "passage-abc123")
+        self.assertEqual(response.json()["sources"][0]["page"], 3)
+        self.assertEqual(response.json()["claims"][0]["sources"][0]["source"], "notes.pdf")
 
     def test_valid_authenticated_upload_reaches_existing_logic(self):
         cookies, _ = self._auth_cookies()
-        response = self._upload(cookies=cookies)
+        response = self._upload(cookies=cookies, data={"user_id": "8"})
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["filename"], "notes.pdf")
-        self.build_rag_mock.assert_called_once_with()
-        self.assertTrue((Path(self.temp_dir.name) / "notes.pdf").exists())
+        self.build_rag_mock.assert_called_once_with(7)
+        self.assertTrue(
+            (Path(self.temp_dir.name) / "documents" / "user_7" / "notes.pdf").exists()
+        )
 
     def test_no_answer_preserves_intended_503(self):
         self.ask_question_mock.return_value = (None, [])
@@ -260,7 +316,9 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         response = self._upload(cookies=cookies)
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "Processing unavailable")
-        self.assertFalse((Path(self.temp_dir.name) / "notes.pdf").exists())
+        self.assertFalse(
+            (Path(self.temp_dir.name) / "documents" / "user_7" / "notes.pdf").exists()
+        )
 
 
 if __name__ == "__main__":

@@ -39,13 +39,10 @@ export default function ChatWorkspacePage() {
   const textareaRef = useRef(null);
   const messageListRef = useRef(null);
   const messagesEndRef = useRef(null);
-
-  // Auto-scroll to bottom whenever messages change or generation status changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isGenerating]);
 
-  // Adjust textarea height dynamically
   const handleTextareaChange = (e) => {
     setQuery(e.target.value);
     const textarea = textareaRef.current;
@@ -98,8 +95,8 @@ export default function ChatWorkspacePage() {
               </div>
               <h2 className={styles.emptyTitle}>AI Learning Workspace</h2>
               <p className={styles.emptyDesc}>
-                Ask any question about your course materials. The assistant retrieves relevant passages
-                from your uploaded PDFs and grounds its answers with page citations.
+                Ask a question about your course materials. Answers identify when they come from your
+                documents or from general model knowledge, with retrieved passages cited where available.
               </p>
 
               <div className={styles.exampleQueries}>
@@ -161,27 +158,85 @@ export default function ChatWorkspacePage() {
                           </button>
                         </div>
                       ) : (
-                        <div className={styles.markdownBody}>
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {message.content}
-                          </ReactMarkdown>
+                        <div>
+                          {message.answerMode && (
+                            <div className={styles.answerMode} data-testid="answer-mode">
+                              {message.answerMode === 'DOCUMENT_SUPPORTED' && 'From your documents'}
+                              {message.answerMode === 'GENERAL_KNOWLEDGE' && 'General model knowledge'}
+                              {message.answerMode === 'INSUFFICIENT_CONFIDENCE' && 'Unable to answer confidently'}
+                            </div>
+                          )}
+                          {message.reliability && message.answerMode !== 'INSUFFICIENT_CONFIDENCE' && (
+                            <div className={styles.reliability}>
+                              Reliability category: {message.reliability.toLowerCase()}
+                            </div>
+                          )}
+                          {message.conflictStatus === 'CONTRADICTION' && (
+                            <div className={styles.conflictNotice} role="note">
+                              The retrieved documents disagree. Both claims and their citations are shown below.
+                            </div>
+                          )}
+                          {message.conflictStatus === 'UNCERTAIN' && message.answerMode !== 'INSUFFICIENT_CONFIDENCE' && (
+                            <div className={styles.answerMessage} role="note">
+                              The relationship between some retrieved statements is uncertain.
+                            </div>
+                          )}
+                          {message.answerMessage && (
+                            <p className={styles.answerMessage} role="note">
+                              {message.answerMessage}
+                            </p>
+                          )}
+                          {message.claims && message.claims.length > 0 ? (
+                            <div className={styles.claimList}>
+                              {message.claims.map((claim, claimIndex) => (
+                                <div className={styles.claim} key={`${claimIndex}-${claim.text}`}>
+                                  {claim.classification === 'PARTIALLY_SUPPORTED' && (
+                                    <div className={styles.partialClaim}>Partially supported</div>
+                                  )}
+                                  <div className={styles.markdownBody}>
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{claim.text}</ReactMarkdown>
+                                  </div>
+                                  <div className={styles.sourcesRow} aria-label="Claim citations">
+                                    {claim.sources.map((src, idx) => (
+                                      <button
+                                        key={`${src.reference}-${idx}`}
+                                        type="button"
+                                        className={styles.citationTag}
+                                        onClick={() => dispatch(setSelectedCitation(src))}
+                                        title={`Inspect excerpt from ${src.source}`}
+                                      >
+                                        <FileText size={12} aria-hidden="true" />
+                                        <span>{src.page == null ? src.source : `${src.source} · p.${src.page}`}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className={styles.markdownBody}>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {message.content}
+                              </ReactMarkdown>
+                            </div>
+                          )}
                         </div>
                       )}
 
                       {/* Source Citations */}
-                      {!isUser && message.sources && message.sources.length > 0 && (
+                      {!isUser && (!message.claims || message.claims.length === 0) && message.sources && message.sources.length > 0 && (
                         <div className={styles.sourcesRow} aria-label="Source citations">
                           {message.sources.map((src, idx) => (
                             <button
-                              key={`${src.source}-${src.page}-${idx}`}
+                              key={`${src.reference || src.source}-${idx}`}
                               type="button"
                               className={styles.citationTag}
                               onClick={() => dispatch(setSelectedCitation(src))}
-                              title={`Inspect excerpt from ${src.source} (Page ${src.page})`}
+                              title={`Inspect excerpt from ${src.source}${src.page == null ? '' : ` (Page ${src.page})`}`}
                             >
                               <FileText size={12} aria-hidden="true" />
                               <span>
-                                {src.source} · p.{src.page}
+                                {src.page == null ? src.source : `${src.source} · p.${src.page}`}
                               </span>
                             </button>
                           ))}
@@ -259,7 +314,7 @@ export default function ChatWorkspacePage() {
               <p className={styles.drawerFilename}>{selectedCitation.source}</p>
               <div className={styles.drawerPage}>
                 <BookOpen size={12} />
-                <span>Page {selectedCitation.page}</span>
+                <span>{selectedCitation.page == null ? 'Page unavailable' : `Page ${selectedCitation.page}`}</span>
               </div>
 
               <p className={styles.drawerExcerptLabel}>Retrieved Excerpt</p>

@@ -1,0 +1,37 @@
+{
+  "dataset_cases": 40,
+  "calibration_cases": 28,
+  "validation_cases": 12,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "metric": "squared_l2",
+  "top_k": 5,
+  "max_squared_l2_distance": 0.942206859588623,
+  "calibration_fit": {
+    "true_positive": 23,
+    "false_positive": 0,
+    "false_negative": 4,
+    "precision": 1.0,
+    "recall": 0.8518518518518519,
+    "f1": 0.92
+  },
+  "validation": {
+    "retrieved_chunk_relevance": {
+      "true_positive": 6,
+      "false_positive": 1,
+      "false_negative": 6,
+      "precision": 0.8571428571428571,
+      "recall": 0.5,
+      "f1": 0.631578947368421
+    },
+    "evidence_sufficiency": {
+      "true_positive": 5,
+      "false_positive": 0,
+      "false_negative": 2,
+      "precision": 1.0,
+      "recall": 0.7142857142857143,
+      "f1": 0.8333333333333333
+    },
+    "support_passage_recall_at_5": 0.9285714285714286,
+    "complete_support_at_5": 0.8571428571428571
+  }
+}

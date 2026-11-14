@@ -8,12 +8,15 @@
  *   Request:  { query: string }
  *   Response: {
  *     answer: string,
- *     sources: Array<{ source: string, page: number, text: string }>
+ *     answer_mode: 'DOCUMENT_SUPPORTED'|'GENERAL_KNOWLEDGE'|'INSUFFICIENT_CONFIDENCE',
+ *     message: string|null,
+ *     reliability: 'HIGH'|'MODERATE'|'LOW', conflict_status: string,
+ *     claims: Array<{ text: string, classification: string, sources: Array }>,
+ *     sources: Array<{ reference: string, source: string, page: number|null, text: string }>
  *   }
  *
- * Note: The endpoint is currently not authentication-gated on the backend.
- *       The frontend routes it within the authenticated application layout.
- *       Chat history is not persisted by the backend — session-only in Redux.
+ * The backend requires cookie authentication; the frontend also routes chat
+ * within the authenticated application layout. Chat history is session-only in Redux.
  */
 
 import apiClient from './apiClient';
@@ -21,7 +24,7 @@ import apiClient from './apiClient';
 /**
  * Submit a learning question to the RAG pipeline.
  * @param {string} query - The user's question
- * @returns {Promise<{ answer: string, sources: Array<{ source: string, page: number, text: string }> }>}
+ * @returns {Promise<{ answer: string, answer_mode: string, message: string|null, reliability: string, claims: Array, sources: Array }>}
  */
 export async function sendQuery(query) {
   const response = await apiClient.post('/chat/query', { query });

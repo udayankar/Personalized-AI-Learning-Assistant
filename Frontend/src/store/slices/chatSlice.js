@@ -8,7 +8,7 @@
  * Clearing Redux state (logout, page reload) clears the conversation.
  *
  * Backend response shape (verified against Backend/App/schemas.py):
- *   { answer: string, sources: [{ source: string, page: number, text: string }] }
+ *   { answer: string, answer_mode: string, message: string|null, reliability: string, claims: [...], sources: [...] }
  */
 
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
@@ -28,7 +28,7 @@ export const sendMessage = createAsyncThunk(
   async (query, { rejectWithValue }) => {
     try {
       const data = await sendQueryAPI(query);
-      return data; // { answer, sources }
+      return data;
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -87,6 +87,12 @@ const chatSlice = createSlice({
           role: 'user',
           content: userQuery,
           sources: [],
+          answerMode: null,
+          answerMessage: null,
+          reliability: null,
+          conflictStatus: null,
+          fallbackReason: null,
+          claims: [],
           timestamp: new Date().toISOString(),
           status: 'complete',
         });
@@ -97,6 +103,12 @@ const chatSlice = createSlice({
           role: 'assistant',
           content: '',
           sources: [],
+          answerMode: null,
+          answerMessage: null,
+          reliability: null,
+          conflictStatus: null,
+          fallbackReason: null,
+          claims: [],
           timestamp: new Date().toISOString(),
           status: 'loading',
         });
@@ -106,12 +118,27 @@ const chatSlice = createSlice({
         state.pendingMessageId = assistantPlaceholderId;
       })
       .addCase(sendMessage.fulfilled, (state, action) => {
-        const { answer, sources } = action.payload;
+        const {
+          answer,
+          answer_mode: answerMode,
+          message: answerMessage,
+          reliability,
+          conflict_status: conflictStatus,
+          fallback_reason: fallbackReason,
+          claims,
+          sources,
+        } = action.payload;
         const pendingMsg = state.messages.find((m) => m.id === state.pendingMessageId);
 
         if (pendingMsg) {
           pendingMsg.content = answer;
           pendingMsg.sources = sources || [];
+          pendingMsg.answerMode = answerMode || null;
+          pendingMsg.answerMessage = answerMessage || null;
+          pendingMsg.reliability = reliability || null;
+          pendingMsg.conflictStatus = conflictStatus || null;
+          pendingMsg.fallbackReason = fallbackReason || null;
+          pendingMsg.claims = claims || [];
           pendingMsg.status = 'complete';
         }
 

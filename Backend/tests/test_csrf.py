@@ -111,11 +111,16 @@ class CsrfProtectionTests(unittest.TestCase):
         self.client = TestClient(self.app)
 
         self.temp_dir = TemporaryDirectory(dir=os.getcwd())
-        self.document_dir_patch = patch.object(
-            documents, "DOCUMENTS_DIR", Path(self.temp_dir.name)
+        self.user_paths_patch = patch.object(
+            documents,
+            "Get_user_paths",
+            side_effect=lambda user_id: (
+                Path(self.temp_dir.name) / f"documents-user-{user_id}",
+                Path(self.temp_dir.name) / f"storage-user-{user_id}",
+            ),
         )
-        self.document_dir_patch.start()
-        self.addCleanup(self.document_dir_patch.stop)
+        self.user_paths_patch.start()
+        self.addCleanup(self.user_paths_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
         self.ask_question_patch = patch.object(chat, "Ask_question", return_value=("Answer", []))
         self.build_rag_patch = patch.object(documents, "Build_rag")
@@ -246,7 +251,7 @@ class CsrfProtectionTests(unittest.TestCase):
             headers=self._origin_headers(token),
         )
         self.assertEqual(chat_response.status_code, 200)
-        self.ask_question.assert_called_once_with("Explain this")
+        self.ask_question.assert_called_once_with("Explain this", self.user.ID)
 
         upload_response = self.client.post(
             "/documents/upload",
@@ -254,7 +259,7 @@ class CsrfProtectionTests(unittest.TestCase):
             headers=self._origin_headers(token),
         )
         self.assertEqual(upload_response.status_code, 201)
-        self.build_rag.assert_called_once_with()
+        self.build_rag.assert_called_once_with(self.user.ID)
 
     def test_safe_get_does_not_require_csrf_header_or_origin(self):
         self._login()

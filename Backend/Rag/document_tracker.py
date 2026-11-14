@@ -2,8 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
-STORAGE_DIR = Path("Storage")
-DOCUMENTS_PATH = STORAGE_DIR / "documents.json"
+from .user_storage import Get_user_paths
 
 def Calculate_file_hash(file_path):
     hasher = hashlib.sha256()
@@ -13,20 +12,24 @@ def Calculate_file_hash(file_path):
 
     return hasher.hexdigest()
 
-def Load_document_metadata():
-    if not DOCUMENTS_PATH.exists():
+def Load_document_metadata(user_id: int):
+    _, storage_dir = Get_user_paths(user_id)
+    documents_path = storage_dir / "documents.json"
+    if not documents_path.exists():
         return {}
-    with open(DOCUMENTS_PATH, "r") as file:
+    with documents_path.open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
-def Save_document_metadata(metadata):
-    STORAGE_DIR.mkdir(exist_ok=True)
-    with open(DOCUMENTS_PATH, "w") as file:
+def Save_document_metadata(metadata, user_id: int):
+    _, storage_dir = Get_user_paths(user_id)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    documents_path = storage_dir / "documents.json"
+    with documents_path.open("w", encoding="utf-8") as file:
         json.dump(metadata, file, indent=4)
 
-def Document_status(file_path):
-    metadata = Load_document_metadata()
+def Document_status(file_path, user_id: int):
+    metadata = Load_document_metadata(user_id)
     file_name = Path(file_path).name
     current_hash = Calculate_file_hash(file_path)
     if file_name not in metadata:
@@ -37,18 +40,4 @@ def Document_status(file_path):
     return "unchanged", current_hash
 
 if __name__ == "__main__":
-
-    file_path = "Data/Documents/opencv-notes.pdf"
-
-    status, file_hash = Document_status(file_path)
-
-    print("Status:", status)
-    print("Hash:", file_hash)
-
-    metadata = Load_document_metadata()
-
-    metadata[Path(file_path).name] = file_hash
-
-    Save_document_metadata(metadata)
-
-    print("\nMetadata saved.")
+    raise SystemExit("Document tracking requires an authenticated database user ID.")

@@ -9,7 +9,7 @@
  *   Response: 201 { message: string, filename: string }
  *   Errors:
  *     400 - No file / not PDF / invalid content type
- *     409 - Filename already exists in the backend documents directory
+ *     409 - Filename already exists in this user's documents directory
  *     500 - Failed to upload and process (FAISS indexing error)
  *
  * Note:

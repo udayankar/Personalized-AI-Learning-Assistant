@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "embedding_model": "all-MiniLM-L6-v2",
+  "metric": "squared_l2",
+  "top_k": 5,
+  "documents": [
+    {"id": "ml-notes", "source": "machine-learning-notes.pdf", "pages": [
+      {"page": 1, "passages": [
+        {"id": "ml-supervised", "text": "Supervised learning trains a model from examples paired with labels. The model learns a mapping from input features to a known target."},
+        {"id": "ml-unsupervised", "text": "Unsupervised learning works with data that has no supplied target labels. It can group similar examples or discover structure in the data."}
+      ]},
+      {"page": 2, "passages": [
+        {"id": "ml-reinforcement", "text": "In reinforcement learning, an agent interacts with an environment, takes actions, and receives rewards or penalties. It learns a policy that aims to maximize long-term reward."}
+      ]},
+      {"page": 3, "passages": [
+        {"id": "ml-overfitting", "text": "Overfitting occurs when a model fits peculiarities of its training examples and performs poorly on new data. A large gap between training and validation performance can be a warning sign."},
+        {"id": "ml-validation", "text": "Split data into training, validation, and test sets. Use training data to fit model parameters, validation data to compare choices, and keep the test set for a final evaluation."}
+      ]},
+      {"page": 4, "passages": [
+        {"id": "ml-gradient", "text": "Gradient descent updates model parameters in the direction that reduces the loss. A learning rate controls the size of each update."}
+      ]},
+      {"page": 5, "passages": [
+        {"id": "ml-classification", "text": "Classification predicts a discrete class or category, such as whether an email is spam or not spam."},
+        {"id": "ml-regression", "text": "Regression predicts a numeric continuous value, such as a temperature or a house price."}
+      ]},
+      {"page": 6, "passages": [
+        {"id": "ml-metrics", "text": "Precision is true positives divided by all predicted positives. Recall is true positives divided by all actual positives. F1 is the harmonic mean of precision and recall."}
+      ]},
+      {"page": 7, "passages": [
+        {"id": "ml-neural-network", "text": "A neural network is made of layers of units that transform input values. During training, parameters are adjusted to reduce a loss function."}
+      ]}
+    ]},
+    {"id": "python-notes", "source": "python-notes.pdf", "pages": [
+      {"page": 2, "passages": [
+        {"id": "py-list", "text": "A Python list is an ordered, mutable collection. It can contain duplicate values, and elements can be accessed by position."},
+        {"id": "py-dict", "text": "A Python dictionary stores key-value pairs. Keys are unique within a dictionary and are used to retrieve their associated values."},
+        {"id": "py-tuple", "text": "A Python tuple is an ordered collection that is generally immutable after creation. Lists are mutable, while tuples are not normally changed in place."}
+      ]},
+      {"page": 5, "passages": [
+        {"id": "py-gil", "text": "In standard CPython builds, the Global Interpreter Lock (GIL) allows only one thread at a time to execute Python bytecode in a process. Threads can still help with I/O-bound work."},
+        {"id": "py-async", "text": "Python async and await provide cooperative concurrency. An event loop switches between tasks when a task awaits an operation, which is useful for many I/O-bound operations."}
+      ]}
+    ]},
+    {"id": "vision-notes", "source": "computer-vision-notes.pdf", "pages": [
+      {"page": 1, "passages": [
+        {"id": "vision-threshold", "text": "Image thresholding compares each pixel with a threshold value. In simple binary thresholding, pixels on one side become zero and pixels on the other side become the maximum value."},
+        {"id": "vision-convolution", "text": "A convolution applies a small kernel across an image. The weighted neighborhood calculation can detect patterns such as edges or blur the image."}
+      ]},
+      {"page": 2, "passages": [
+        {"id": "vision-morphology", "text": "Morphological image operations use a structuring element to change shapes in a binary image. Erosion shrinks foreground regions and dilation expands them."},
+        {"id": "vision-hsv", "text": "HSV represents color using hue, saturation, and value. Separating these components can make some color-based image processing tasks easier than working directly with RGB values."}
+      ]}
+    ]},
+    {"id": "network-notes", "source": "networking-notes.pdf", "pages": [
+      {"page": 3, "passages": [
+        {"id": "net-dns", "text": "The Domain Name System (DNS) looks up records that map domain names to information such as IP addresses. A resolver may use cached answers before contacting other DNS servers."},
+        {"id": "net-http", "text": "HTTP is an application-layer protocol used for requests and responses between clients and servers. HTTP methods such as GET and POST communicate the intended operation."},
+        {"id": "net-tcp", "text": "TCP provides a reliable, ordered byte stream between applications. It uses acknowledgements and retransmission to handle packet loss."},
+        {"id": "net-tls", "text": "TLS protects data exchanged over a connection using encryption and integrity checks. HTTPS uses TLS to protect HTTP communication."}
+      ]}
+    ]},
+    {"id": "study-notes", "source": "study-skills.pdf", "pages": [
+      {"page": 4, "passages": [
+        {"id": "study-active", "text": "Active recall is a study practice in which a learner tries to retrieve information from memory instead of only rereading it."},
+        {"id": "study-spaced", "text": "Spaced repetition schedules review across increasing intervals. It aims to revisit material over time rather than concentrate every review in one session."}
+      ]}
+    ]},
+    {"id": "testing-a", "source": "model-testing-guide.pdf", "pages": [
+      {"page": 1, "passages": [
+        {"id": "testing-validation-first", "text": "Use a validation set to compare models and tune hyperparameters. Reserve the test set for a final evaluation after model choices are complete."}
+      ]}
+    ]},
+    {"id": "testing-b", "source": "model-testing-notes.pdf", "pages": [
+      {"page": 8, "passages": [
+        {"id": "testing-test-repeatedly", "text": "This note recommends checking the test set repeatedly during training and using its score to tune model hyperparameters."}
+      ]}
+    ]}
+  ],
+  "cases": [
+    {"id": "cal-01", "split": "calibration", "category": "answerable", "question": "How does supervised learning use labels?", "expected_answer_points": ["Training examples are paired with labels", "The model maps inputs to a target"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-supervised"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-02", "split": "calibration", "category": "answerable", "question": "What is unsupervised learning used to discover?", "expected_answer_points": ["Structure or groups in data without supplied labels"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-unsupervised"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-03", "split": "calibration", "category": "answerable", "question": "Explain the reward loop in reinforcement learning.", "expected_answer_points": ["An agent acts in an environment", "It receives rewards or penalties", "It learns a policy"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-reinforcement"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-04", "split": "calibration", "category": "answerable", "question": "What does overfitting mean and how might validation performance reveal it?", "expected_answer_points": ["Fits training peculiarities", "Poor generalization", "Training-validation gap can warn"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-overfitting"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-05", "split": "calibration", "category": "multi_document", "question": "Which data is used to fit parameters and which is kept for final evaluation?", "expected_answer_points": ["Training fits parameters", "Validation compares choices", "Test is for final evaluation"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-validation", "testing-validation-first"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-06", "split": "calibration", "category": "answerable", "question": "Define precision and recall for a classifier.", "expected_answer_points": ["Precision is TP over predicted positives", "Recall is TP over actual positives"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-metrics"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-07", "split": "calibration", "category": "exact_terminology", "question": "What is the F1 score in terms of precision and recall?", "expected_answer_points": ["Harmonic mean of precision and recall"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-metrics"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-08", "split": "calibration", "category": "answerable", "question": "When is a problem classification rather than regression?", "expected_answer_points": ["Classification predicts discrete categories", "Regression predicts continuous numeric values"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-classification", "ml-regression"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-09", "split": "calibration", "category": "answerable", "question": "How does gradient descent update a model?", "expected_answer_points": ["Updates parameters to reduce loss", "Learning rate controls update size"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-gradient"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-10", "split": "calibration", "category": "answerable", "question": "Why separate train, validation, and test data?", "expected_answer_points": ["Different roles for fitting, model choice, and final evaluation"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-validation"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-11", "split": "calibration", "category": "answerable", "question": "Can a Python list contain duplicates, and can its contents be changed?", "expected_answer_points": ["Ordered and mutable", "Duplicates allowed"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["py-list"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-12", "split": "calibration", "category": "answerable", "question": "How does a Python dictionary find a value?", "expected_answer_points": ["Stores key-value pairs", "Uses unique keys for lookup"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["py-dict"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-13", "split": "calibration", "category": "exact_terminology", "question": "What does the GIL restrict in standard CPython?", "expected_answer_points": ["One thread executes Python bytecode at a time per process", "I/O-bound threads can still help"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["py-gil"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-14", "split": "calibration", "category": "answerable", "question": "How do async and await support concurrent I/O?", "expected_answer_points": ["Cooperative concurrency", "Event loop switches at await"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["py-async"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-15", "split": "calibration", "category": "answerable", "question": "What happens to pixels in simple binary thresholding?", "expected_answer_points": ["Pixels are compared with a threshold", "Outputs become zero or maximum"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["vision-threshold"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-16", "split": "calibration", "category": "answerable", "question": "How can convolution help detect image edges?", "expected_answer_points": ["A kernel moves across an image", "Weighted neighborhood operations can detect edges"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["vision-convolution"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-17", "split": "calibration", "category": "answerable", "question": "Compare erosion and dilation in morphology.", "expected_answer_points": ["Erosion shrinks foreground", "Dilation expands foreground"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["vision-morphology"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-18", "split": "calibration", "category": "answerable", "question": "What do hue, saturation, and value represent?", "expected_answer_points": ["HSV components", "May help color processing compared with RGB"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["vision-hsv"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-19", "split": "calibration", "category": "answerable", "question": "What is DNS responsible for in a network?", "expected_answer_points": ["Looks up records mapping domain names to information such as IP addresses"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["net-dns"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-20", "split": "calibration", "category": "answerable", "question": "What kind of communication does HTTP define?", "expected_answer_points": ["Application-layer request and response protocol"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["net-http"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-21", "split": "calibration", "category": "answerable", "question": "Why is TCP described as reliable and ordered?", "expected_answer_points": ["Ordered byte stream", "Acknowledgements and retransmission handle loss"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["net-tcp"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-22", "split": "calibration", "category": "answerable", "question": "How does TLS protect HTTPS communication?", "expected_answer_points": ["Encryption and integrity checks", "HTTPS uses TLS"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["net-tls"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-23", "split": "calibration", "category": "answerable", "question": "What is active recall?", "expected_answer_points": ["Try to retrieve information from memory instead of rereading"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["study-active"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-24", "split": "calibration", "category": "answerable", "question": "How does spaced repetition schedule review?", "expected_answer_points": ["Review at increasing intervals over time"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["study-spaced"], "expected_answer_mode": "document_evidence"},
+    {"id": "cal-25", "split": "calibration", "category": "ambiguous", "question": "Explain lists.", "expected_answer_points": ["Could mean Python lists or another kind of list; ask what context is intended"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["py-list"], "expected_answer_mode": "clarification_needed"},
+    {"id": "cal-26", "split": "calibration", "category": "ambiguous", "question": "What is the best model?", "expected_answer_points": ["Need a task or evaluation criterion to define best"], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "clarification_needed"},
+    {"id": "cal-27", "split": "calibration", "category": "unanswerable", "question": "What exact grade did I receive in my last exam?", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information"},
+    {"id": "cal-28", "split": "calibration", "category": "irrelevant", "question": "What time does the downtown swimming pool close on Sundays?", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information"},
+    {"id": "val-29", "split": "validation", "category": "multi_document", "question": "How do validation data and overfitting relate when checking generalization?", "expected_answer_points": ["Validation performance helps reveal overfitting", "Overfit models generalize poorly"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-validation", "ml-overfitting"], "expected_answer_mode": "document_evidence"},
+    {"id": "val-30", "split": "validation", "category": "multi_document", "question": "How can a client resolve a domain name and then communicate reliably with a server?", "expected_answer_points": ["DNS resolves names", "TCP provides reliable ordered transport"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["net-dns", "net-tcp"], "expected_answer_mode": "document_evidence"},
+    {"id": "val-31", "split": "validation", "category": "multi_document", "question": "Describe how a neural network learns and how gradient descent changes it.", "expected_answer_points": ["Network layers transform inputs", "Gradient descent adjusts parameters to reduce loss"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-neural-network", "ml-gradient"], "expected_answer_mode": "document_evidence"},
+    {"id": "val-32", "split": "validation", "category": "conflicting", "question": "What do the uploaded notes say about using the test set during tuning?", "expected_answer_points": ["One source says reserve it for final evaluation", "Another recommends repeated tuning", "Identify disagreement without silently choosing"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["testing-validation-first", "testing-test-repeatedly"], "expected_answer_mode": "conflicting_evidence"},
+    {"id": "val-33", "split": "validation", "category": "conflicting", "question": "Do the two model-testing documents agree about when to use test data?", "expected_answer_points": ["No; sources make conflicting recommendations", "Cite both documents"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["testing-validation-first", "testing-test-repeatedly"], "expected_answer_mode": "conflicting_evidence"},
+    {"id": "val-34", "split": "validation", "category": "ambiguous", "question": "Explain model evaluation.", "expected_answer_points": ["Could refer to split strategy or classification metrics; ask which aspect"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["ml-validation", "ml-metrics"], "expected_answer_mode": "clarification_needed"},
+    {"id": "val-35", "split": "validation", "category": "unanswerable", "question": "What is the exact laptop battery voltage listed in my documents?", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information"},
+    {"id": "val-36", "split": "validation", "category": "irrelevant", "question": "Which restaurant has the best lunch special near my home?", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information"},
+    {"id": "val-37", "split": "validation", "category": "ambiguous", "question": "Is a list ordered?", "expected_answer_points": ["Likely Python, but context is not explicit; acknowledge interpretation"], "evidence_sufficient": true, "expected_supporting_passage_ids": ["py-list"], "expected_answer_mode": "document_evidence"},
+    {"id": "val-38", "split": "validation", "category": "empty_knowledge_base", "question": "Explain quantum entanglement.", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information", "knowledge_base_empty": true},
+    {"id": "val-39", "split": "validation", "category": "empty_knowledge_base", "question": "How do I configure a home router?", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information", "knowledge_base_empty": true},
+    {"id": "val-40", "split": "validation", "category": "unanswerable", "question": "What is the exact OpenCV version used in the uploaded lab?", "expected_answer_points": [], "evidence_sufficient": false, "expected_supporting_passage_ids": [], "expected_answer_mode": "insufficient_information"}
+  ]
+}

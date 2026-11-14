@@ -284,9 +284,9 @@ export default function DocumentLibraryPage() {
       <div className={styles.limitationBanner} role="note">
         <Info size={20} className={styles.limitationIcon} aria-hidden="true" />
         <p className={styles.limitationText}>
-          <strong>Knowledge Base Storage Architecture:</strong> Uploaded documents are converted into
-          text chunks and embedded into the server's shared FAISS index. The current backend stores all
-          materials persistently on disk, but does not yet expose remote file browsing or deletion endpoints.
+          <strong>Knowledge Base Storage Architecture:</strong> Uploaded documents are stored in a
+          knowledge base scoped to your authenticated account. The backend currently stores files and
+          the FAISS index on disk, but does not yet expose remote file browsing or deletion endpoints.
           Documents listed above represent files uploaded during your active browser session.
         </p>
       </div>
