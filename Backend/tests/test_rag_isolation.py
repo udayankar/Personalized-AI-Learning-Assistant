@@ -74,6 +74,14 @@ class RagUserIsolationTests(unittest.TestCase):
         self.addCleanup(self.documents_root_patch.stop)
         self.addCleanup(self.storage_root_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
+        self.cache_lookup_patch = patch.object(
+            rag.answer_cache, "Lookup", return_value=(None, "miss", 0.0, 0)
+        )
+        self.cache_lookup_patch.start()
+        self.addCleanup(self.cache_lookup_patch.stop)
+        self.cache_store_patch = patch.object(rag.answer_cache, "Store", return_value=False)
+        self.cache_store_patch.start()
+        self.addCleanup(self.cache_store_patch.stop)
 
     def _write_document(self, user_id, filename, contents):
         documents_dir, _ = user_storage.Get_user_paths(user_id)

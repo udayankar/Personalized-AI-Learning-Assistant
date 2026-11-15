@@ -1,7 +1,10 @@
 import hashlib
+import logging
 import re
+import time
 from dataclasses import dataclass
 
+from . import answer_cache, generator
 from .answering import Validate_claim_verification, Validate_evidence_assessment
 from .vector_store import Load_vector_store, Retrieve
 from .embedder import model
@@ -24,6 +27,7 @@ DOCUMENT_GENERATION_FAILED = "DOCUMENT_GENERATION_FAILED"
 DOCUMENT_ANSWER_UNRELIABLE = "DOCUMENT_ANSWER_UNRELIABLE"
 GENERAL_KNOWLEDGE_UNRELIABLE = "GENERAL_KNOWLEDGE_UNRELIABLE"
 EVIDENCE_ASSESSMENT_FAILED = "EVIDENCE_ASSESSMENT_FAILED"
+logger = logging.getLogger(__name__)
 
 
 FALLBACK_MESSAGES = {
@@ -98,8 +102,10 @@ def _insufficient_result(reason):
     )
 
 
-def _general_knowledge_result(question, reason):
+def _general_knowledge_result(question, reason, gemini_call_count=None):
     try:
+        if gemini_call_count is not None:
+            gemini_call_count[0] += 1
         generated = Generate_general_answer(question)
     except Exception:
         return _insufficient_result(GENERAL_KNOWLEDGE_UNRELIABLE)
@@ -178,9 +184,11 @@ def _valid_generated_claims(raw, reference_documents):
     return claims, None
 
 
-def _document_answer(question, retrieval):
+def _document_answer(question, retrieval, gemini_call_count=None):
     passages, reference_map, reference_documents = _passage_bundle(retrieval)
     try:
+        if gemini_call_count is not None:
+            gemini_call_count[0] += 1
         raw_assessment = Assess_document_evidence(question, passages)
     except Exception:
         return None, EVIDENCE_ASSESSMENT_FAILED
@@ -197,6 +205,8 @@ def _document_answer(question, retrieval):
         "relationships": list(assessment.relationships),
     }
     try:
+        if gemini_call_count is not None:
+            gemini_call_count[0] += 1
         generated = Generate_claims(question, passages, assessment_payload)
     except Exception:
         return None, DOCUMENT_GENERATION_FAILED
@@ -205,6 +215,8 @@ def _document_answer(question, retrieval):
         return None, claim_error
 
     try:
+        if gemini_call_count is not None:
+            gemini_call_count[0] += 1
         verification = Verify_document_claims(question, claims, passages)
     except Exception:
         return None, CITATION_VERIFICATION_FAILED
@@ -244,18 +256,79 @@ def _document_answer(question, retrieval):
     return result, None
 
 
-def Ask_question(question, user_id: int):
-    index, chunks = Load_vector_store(user_id)
-    if index is None or not chunks:
-        return _general_knowledge_result(question, NO_SUFFICIENT_DOCUMENT_EVIDENCE)
+def _answer_from_cache(payload):
+    return AnswerResult(
+        answer=payload["answer"],
+        answer_mode=payload["answer_mode"],
+        message=payload["message"],
+        sources=payload["sources"],
+        claims=payload["claims"],
+        reliability=payload["reliability"],
+        conflict_status=payload["conflict_status"],
+        fallback_reason=payload["fallback_reason"],
+    )
 
+
+def _ask_question(question, user_id: int):
+    index, chunks = Load_vector_store(user_id)
     retrieval = Retrieve(question, index, chunks, model, user_id, k=5)
+    cache_key = None
+    try:
+        pipeline_version = answer_cache.Pipeline_fingerprint(
+            generator, retrieval.relevance_threshold
+        )
+        context_fingerprint = answer_cache.Context_fingerprint(
+            retrieval, user_id, pipeline_version
+        )
+        _, reference_map, _ = _passage_bundle(retrieval)
+        current_sources = {value["reference"]: value for value in reference_map.values()}
+        query_hash = answer_cache.Query_hash(question)
+        cache_key = (query_hash, context_fingerprint, pipeline_version, current_sources)
+        cached, reason, lookup_ms, calls_avoided = answer_cache.Lookup(
+            user_id, *cache_key
+        )
+        if cached is not None:
+            logger.info(
+                "answer_cache outcome=hit lookup_ms=%.2f gemini_calls_avoided=%d",
+                lookup_ms, calls_avoided,
+            )
+            return _answer_from_cache(cached)
+        logger.info("answer_cache outcome=%s lookup_ms=%.2f", reason, lookup_ms)
+    except Exception as error:
+        logger.warning(
+            "answer_cache outcome=fingerprint_unavailable error_type=%s",
+            type(error).__name__,
+        )
+    gemini_call_count = [0]
     if not retrieval.evidence_sufficient:
-        return _general_knowledge_result(question, NO_SUFFICIENT_DOCUMENT_EVIDENCE)
-    document_result, fallback_reason = _document_answer(question, retrieval)
-    if document_result is not None:
-        return document_result
-    return _general_knowledge_result(question, fallback_reason)
+        result = _general_knowledge_result(
+            question, NO_SUFFICIENT_DOCUMENT_EVIDENCE, gemini_call_count
+        )
+    else:
+        result, fallback_reason = _document_answer(
+            question, retrieval, gemini_call_count
+        )
+        if result is None:
+            result = _general_knowledge_result(
+                question, fallback_reason, gemini_call_count
+            )
+
+    if cache_key is not None and result.answer_mode != INSUFFICIENT_CONFIDENCE:
+        answer_cache.Store(
+            user_id, cache_key[0], cache_key[1], cache_key[2],
+            result, gemini_call_count[0],
+        )
+    return result
+
+
+def Ask_question(question, user_id: int):
+    started = time.perf_counter()
+    result = _ask_question(question, user_id)
+    logger.info(
+        "rag_query complete answer_mode=%s total_ms=%.2f",
+        result.answer_mode, (time.perf_counter() - started) * 1000,
+    )
+    return result
 
 
 if __name__ == "__main__":

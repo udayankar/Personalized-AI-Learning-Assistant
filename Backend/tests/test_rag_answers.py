@@ -36,6 +36,14 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.addCleanup(self.documents_patch.stop)
         self.addCleanup(self.storage_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
+        self.cache_lookup_patch = patch.object(
+            rag.answer_cache, "Lookup", return_value=(None, "miss", 0.0, 0)
+        )
+        self.cache_lookup_patch.start()
+        self.addCleanup(self.cache_lookup_patch.stop)
+        self.cache_store_patch = patch.object(rag.answer_cache, "Store", return_value=False)
+        self.cache_store_patch.start()
+        self.addCleanup(self.cache_store_patch.stop)
         rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
         self.assessment_patch = patch.object(
             rag, "Assess_document_evidence", return_value=self._assessment()
