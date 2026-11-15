@@ -1,531 +1,269 @@
 # Personalized AI Learning Assistant
 
-### A learning platform that adapts to what you know and what you need to learn next.
+### Learn from your own material. Ask better questions. Understand concepts more deeply.
 
-The Personalized AI Learning Assistant is an AI-powered learning platform designed to combine personalized learning recommendations, knowledge-grounded AI assistance, and adaptive explanations in one system.
+The **Personalized AI Learning Assistant** is a project exploring how Artificial Intelligence can make learning more accessible, contextual, and personalized.
 
-The platform uses **Machine Learning** to personalize learning resources, **Retrieval-Augmented Generation (RAG)** to provide grounded answers from educational content, and **Large Language Models (LLMs)** to generate contextual explanations based on the learner's current knowledge and goals.
+The idea is simple: instead of searching through pages of study material or asking questions without context, learners should be able to interact with their own learning resources, receive explanations, and gradually build a better understanding of what they are studying.
 
-> 🚧 **Status: Actively under development**
+The project combines AI-powered question answering with a broader vision of personalized learning.
 
----
-
-## 🧠 Why Personalized Learning?
-
-Traditional learning platforms often provide the same content and learning paths to every user.
-
-General-purpose AI assistants can explain almost anything, but they usually focus on the current question rather than maintaining a structured understanding of the learner.
-
-A beginner and an advanced learner asking:
-
-> "Explain Python multithreading."
-
-should not necessarily receive the same explanation.
-
-The assistant aims to understand:
-
-- What the learner already knows
-- Their current proficiency
-- What they want to learn
-- What they have already studied
-- How they performed in previous assessments
-- What they should learn next
-
-This allows the platform to move beyond simple AI question-answering toward a more **personalized learning experience**.
+> 🚧 **Development Status: Actively under development**
 
 ---
 
-## ✨ Features
+## 🧠 Why this project?
 
-### 👤 Learner Profile
+Learning is not just about finding information. It is about understanding it.
 
-The platform maintains a learner profile containing information such as:
+Students often work with lecture notes, textbooks, PDFs, and other study materials. Finding a particular concept in these resources can be time-consuming, and understanding difficult topics often requires additional explanations.
 
-- Skills
-- Proficiency levels
-- Learning goals
-- Completed topics
-- Learning history
-- Assessment performance
-- Interaction history
+General-purpose AI assistants can explain concepts, but they may not always use the learner's own study material as their source.
 
-This information forms the foundation of the learner's personalized experience.
+This project aims to bring these two experiences closer together.
+
+The current application allows users to upload their study PDFs, ask questions, and receive AI-generated responses that can be supported by references to their uploaded material.
+
+The long-term goal is to go beyond question answering and build an assistant that can understand a learner's progress, identify knowledge gaps, and help determine what to learn next.
 
 ---
 
-### 🎯 Personalized Recommendations
+## ✨ What can you do with it?
 
-The system recommends learning resources according to the learner's current state.
+### 📚 Learn from your own study materials
 
-Recommendations can consider:
+Upload PDF documents containing your notes, lecture material, or other educational content.
 
-- Current skills
-- Skill proficiency
-- Learning goals
-- Topic prerequisites
-- Previous learning activity
-- Assessment results
-- Resource difficulty
-- Topic similarity
+The assistant processes the documents so you can ask questions about their contents instead of manually searching through every page.
 
-The recommendation system ranks resources according to their relevance to the individual learner.
+### 🤖 Ask questions naturally
 
----
-
-### 🤖 Machine Learning
-
-Machine Learning is used primarily for **personalization and recommendation**.
-
-Instead of simply asking an LLM:
-
-> "What should this user learn?"
-
-the system uses structured learner and resource information to produce ranked recommendations.
-
-```text
-Learner Profile
-      +
-Resource Information
-      +
-Interaction History
-      ↓
-Machine Learning
-      ↓
-Relevance Scores
-      ↓
-Ranked Recommendations
-```
-
-For users with little or no interaction history, the system can fall back to content-based and prerequisite-based recommendations.
-
----
-
-### 📚 AI-Powered Learning Assistant
-
-Users can ask questions about topics they are learning.
+Ask questions in everyday language, just as you would ask a tutor.
 
 For example:
 
-- Explain gradient descent.
-- Why does Python have a GIL?
-- How does an HTTP request work?
-- What should I learn after SQL joins?
+- Explain a concept from my notes.
+- What is the difference between two topics?
+- Summarize an important idea.
+- Help me understand a difficult paragraph.
 
-The assistant uses the learner's context to provide an appropriate response rather than treating every conversation independently.
+### 🔎 Check where answers come from
+
+When an answer is supported by your uploaded documents, the application can provide references to the source document, page, and relevant passage.
+
+This makes it easier to verify information instead of blindly trusting an AI-generated response.
+
+### 💡 Understand different answer types
+
+The assistant distinguishes between three situations:
+
+| Answer type | What it means |
+|---|---|
+| **Document Supported** | The answer is based on relevant information retrieved from your uploaded documents. |
+| **General Knowledge** | Your documents do not provide sufficient information, so the assistant uses general AI knowledge. |
+| **Insufficient Confidence** | The available evidence is not strong enough to provide a sufficiently supported answer. |
+
+This distinction helps make it clearer when an answer comes from your study material and when it does not.
+
+### 🔐 Keep your learning materials private
+
+Uploaded documents and their associated search data are organized separately for individual accounts.
+
+The application also uses authentication and request-protection mechanisms to help protect user sessions and data.
+
+### ⚡ Avoid unnecessary repeated generation
+
+The application includes an exact-answer caching mechanism.
+
+When a previously answered question and its relevant document context still match, the system can reuse the cached response rather than generating the same answer again.
 
 ---
 
-### 🔎 Retrieval-Augmented Generation
+## 🔄 How it works
 
-The assistant uses RAG to retrieve relevant information from a curated educational knowledge base before generating an answer.
+Using the application is straightforward:
+
+1. Create an account and sign in.
+2. Upload a PDF containing selectable text.
+3. Ask a question about the uploaded material.
+4. The application searches for relevant passages.
+5. The AI generates an answer using the available context.
+6. Review the explanation and its references.
+
+The objective is to make studying from personal learning materials more convenient and interactive.
+
+---
+
+## 🎯 Who is it for?
+
+The application is intended for learners who regularly work with digital study material.
+
+Some examples include:
+
+- **College students** — revisiting lecture notes and understanding difficult concepts.
+- **Exam preparation** — asking questions about personal study PDFs.
+- **Technical learners** — exploring programming, computer science, mathematics, and other technical subjects.
+- **Independent learners** — interacting with educational documents at their own pace.
+
+The current application focuses on PDF-based question answering. It works with PDFs containing extractable text; scanned documents and other file formats are not currently supported.
+
+---
+
+## 🏗️ The bigger vision
+
+The current application focuses on document-based AI assistance, but the broader goal is to create a system that understands more than just the question being asked.
+
+A genuinely personalized learning assistant should gradually understand:
+
+- What a learner already knows.
+- Which topics they are trying to learn.
+- Where they struggle.
+- How they perform in assessments.
+- Which concepts they should study next.
+
+The long-term vision is to connect several technologies to support this process.
+
+| Technology | Its intended role |
+|---|---|
+| Machine Learning | Personalizing and ranking learning recommendations. |
+| RAG | Retrieving relevant information from learning resources. |
+| Large Language Models | Generating contextual explanations. |
+| Assessments | Evaluating a learner's understanding. |
+| Learner Modeling | Maintaining an evolving picture of learning progress. |
+
+These components represent the direction of the project, not a claim that every capability is already implemented.
+
+### A possible future learning cycle
 
 ```text
-Educational Documents
-        ↓
-Text Processing
-        ↓
-Chunking
-        ↓
-Embeddings
-        ↓
-Vector Database
-        ↓
-Semantic Retrieval
-        ↓
-Relevant Context
-        ↓
-LLM
-        ↓
-Grounded Response
+       Learn
+         |
+         v
+      Practice
+         |
+         v
+     Assessment
+         |
+         v
+   Evaluate Progress
+         |
+         v
+  Identify Knowledge Gaps
+         |
+         v
+ Recommend What to Learn
+         |
+         v
+       Learn Again
 ```
 
-This allows the assistant to use project-specific educational content as a source of information instead of relying entirely on the LLM's pretrained knowledge.
-
-Where possible, retrieved sources can also be shown to the learner.
+The objective is to move beyond isolated AI conversations toward a continuous learning experience.
 
 ---
 
-### 🧩 Adaptive Explanations
+## 🛠️ Built with
 
-The assistant can adjust the depth and technicality of explanations according to the learner's proficiency.
+The project uses a combination of frontend, backend, database, and AI technologies.
 
-For example, a beginner learning Python multithreading may receive:
+| Technology | Purpose |
+|---|---|
+| React | Building the user interface. |
+| JavaScript | Frontend application logic. |
+| FastAPI | Backend API and application logic. |
+| Python | Backend and AI processing. |
+| PostgreSQL | Persistent application data. |
+| Gemini | AI-powered assessment and response generation. |
+| Sentence Transformers | Converting text into numerical embeddings. |
+| FAISS | Finding relevant passages from uploaded documents. |
+| Scikit-learn | Machine Learning experimentation and development. |
 
-- Simple concepts
-- Analogies
-- Basic examples
-- Practical use cases
-
-An advanced Python learner may instead receive explanations involving:
-
-- CPython internals
-- GIL
-- Native threads
-- Operating-system scheduling
-- Kernel-level execution
-- CPU behavior
-
-The LLM generates the explanation, while the learner model provides the context required for personalization.
+For the complete architecture, installation instructions, environment configuration, and implementation details, see the [technical documentation](../README.md).
 
 ---
 
-### 📝 Assessments
+## 🚧 Current status and limitations
 
-The platform can evaluate whether a learner actually understood a topic.
+The project is being developed incrementally.
 
-```text
-Learn
-  ↓
-Practice
-  ↓
-Assessment
-  ↓
-Performance
-  ↓
-Mastery Update
-```
+The current implementation focuses on:
 
-Assessment results can be used to update the learner's estimated mastery and influence future recommendations.
+- User authentication.
+- PDF document upload and processing.
+- Text extraction, chunking, and embedding generation.
+- Document retrieval using FAISS.
+- AI-powered question answering.
+- Document-supported and general-knowledge answer handling.
+- Source references and evidence validation.
+- Account-specific document storage and retrieval.
+- Exact-answer caching.
 
-This prevents the system from assuming that simply reading an explanation means the learner has mastered the topic.
+Some important limitations remain:
 
----
+- Scanned PDFs without extractable text are not supported.
+- Persistent chat history is not available.
+- A complete document management experience is not yet available.
+- AI-generated answers can still be incomplete or incorrect.
+- Learning recommendations and mastery tracking are not implemented yet.
+- The project is under development and is not presented as a publicly hosted service.
 
-### 🔄 Continuous Personalization
-
-The learner model evolves as the user interacts with the platform.
-
-```text
-Learn
-  ↓
-Interact
-  ↓
-Assess
-  ↓
-Update Mastery
-  ↓
-Recommend
-  ↓
-Learn Again
-  ↺
-```
-
-The objective is to create a continuously improving learning experience rather than a collection of independent AI conversations.
+AI-generated responses should always be reviewed, especially when accuracy is important.
 
 ---
 
-### 🛡️ Intelligent Fallbacks
+## 🔮 Future direction
 
-The system accounts for situations where individual components may not have enough information.
+Future development aims to expand the application beyond document-based question answering.
 
-For example:
+Potential improvements include:
 
-**New learner**
+- Learner profiles and learning goals.
+- Learning progress tracking.
+- Topic-wise assessments.
+- Knowledge-gap identification.
+- Personalized learning recommendations.
+- Adaptive explanations based on proficiency.
+- Support for additional learning resources.
+- Evaluation of recommendation quality and learning outcomes.
 
-```text
-No interaction history
-        ↓
-Content + Skill + Goal based recommendation
-```
-
-**Insufficient RAG coverage**
-
-```text
-Query
-  ↓
-Relevant content available?
-   /        \
- Yes         No
- ↓            ↓
-RAG       Broader retrieval
-              ↓
-        Still insufficient?
-          /          \
-        Yes           No
-         ↓             ↓
- Knowledge gap        RAG
-```
-
-This helps prevent unsupported information or weak recommendations from being treated as reliable results.
+The intention is to develop these features progressively, with measurable results rather than simply adding AI functionality for its own sake.
 
 ---
 
-## 🏗️ Architecture
+## 🚀 Getting started
 
-The platform is designed as a full-stack AI application with a React frontend, FastAPI backend, Machine Learning services, and a RAG pipeline.
+Want to explore or run the project locally?
 
-```text
-                         USER
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │ React Frontend  │
-                  └────────┬────────┘
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │ FastAPI Backend │
-                  └────────┬────────┘
-                           │
-                           ▼
-                  ┌─────────────────┐
-                  │  Learner Model  │
-                  └────────┬────────┘
-                           │
-              ┌────────────┴────────────┐
-              │                         │
-              ▼                         ▼
-     ┌─────────────────┐       ┌─────────────────┐
-     │ ML Recommendation│       │   RAG Pipeline  │
-     └────────┬────────┘       └────────┬────────┘
-              │                         │
-              ▼                         ▼
-     ┌─────────────────┐       ┌─────────────────┐
-     │ Recommendation  │       │ Vector Database │
-     │   Validation    │       └────────┬────────┘
-     └────────┬────────┘                │
-              │                         ▼
-              │                ┌─────────────────┐
-              │                │ Retrieved Context│
-              │                └────────┬────────┘
-              │                         │
-              └────────────┬────────────┘
-                           ▼
-                    ┌─────────────┐
-                    │ LLM / GenAI │
-                    └──────┬──────┘
-                           │
-                           ▼
-                 Personalized Response
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │  Assessment │
-                    └──────┬──────┘
-                           │
-                           ▼
-                     Mastery Update
-                           │
-                           ▼
-                    Learner Model
-                           │
-                           └──────────────↺
-```
+Visit the [main project README](../README.md) for:
 
-The frontend handles the user experience and interaction with the platform.
-
-The FastAPI backend coordinates authentication, learner data, recommendations, AI services, learning history, and application logic.
-
-The ML layer handles learner-aware recommendations, while the RAG layer handles retrieval of relevant educational knowledge.
-
-The LLM combines the retrieved context with learner information to generate the final response.
+- Prerequisites.
+- Installation instructions.
+- Environment configuration.
+- Database setup and migrations.
+- Backend and frontend startup instructions.
+- Testing and evaluation details.
 
 ---
 
-## 🛠️ Tech Stack
+## 🤝 Contributing
 
-### Frontend
-- React
-- JavaScript
-- React Router
-- CSS
+Suggestions, feedback, and discussions are welcome.
 
-### Backend
-- Python
-- FastAPI
+If you find an issue or have an idea that could improve the project, feel free to open an issue or contribute through a pull request.
 
-### Machine Learning
-- Python
-- NumPy
-- Pandas
-- Scikit-learn
-
-### AI / NLP
-- Large Language Models
-- Embedding Models
-- Natural Language Processing
-- Retrieval-Augmented Generation
-- Vector Search
-- Vector Database
-- Semantic Similarity Search
-
-### Database
-- PostgreSQL
-
-### Development
-- Git
-- GitHub
-- VS Code
+Please refer to the technical documentation for development and setup details.
 
 ---
 
-## 📁 Project Structure
+## 📄 License
 
-The project is currently under active development, and the internal folder structure is evolving alongside the architecture.
-A detailed project structure will be documented here once the core application architecture is finalized.
-
----
-
-## 🚧 Development Status
-
-The project is being developed incrementally, with individual AI and application components being built and integrated progressively.
-
-### Completed
-- RAG pipeline architecture
-- Document ingestion pipeline
-- Document preprocessing
-- Text chunking
-- Embedding generation
-- Vector storage
-- Semantic retrieval
-- Initial RAG question-answering pipeline
-
-### In Development
-- Learner profile system
-- Learner model
-- Machine Learning recommendation system
-- Learning-resource representation
-- Recommendation ranking
-- FastAPI backend
-- React frontend
-- LLM integration
-- Assessment system
-- Feedback system
-
-### Planned
-- Mastery estimation
-- Recommendation validation
-- Continuous learner-model updates
-- Adaptive assessments
-- Recommendation evaluation
-- RAG evaluation
-- End-to-end personalization
-- Production deployment
+The repository currently does not include an explicit open-source license. Reuse, modification, and redistribution permissions have therefore not been formally specified.
 
 ---
 
-## 🔌 Backend API
+## 👨‍💻 About the project
 
-The backend is being built with FastAPI and will provide REST endpoints for the platform's core functionality.
+**Personalized AI Learning Assistant**
 
-Planned API areas include:
+An independently developed project exploring the intersection of Artificial Intelligence, Machine Learning, Generative AI, information retrieval, and personalized education.
 
-- Authentication
-- Users
-- Learner Profiles
-- Skills
-- Learning Goals
-- Learning Resources
-- Recommendations
-- Learning Sessions
-- AI Assistant
-- Assessments
-- Feedback
-- Learning History
-
-API documentation will expand as additional backend functionality is implemented.
-
----
-
-## 🧪 Evaluation
-
-The platform will evaluate its major components independently as well as the complete learning experience.
-
-### Recommendation
-- Precision@K
-- Recall@K
-- NDCG
-- Recommendation relevance
-
-### RAG
-- Retrieval relevance
-- Retrieval precision
-- Retrieval recall
-- Answer correctness
-- Groundedness
-- Source accuracy
-
-### Learning
-- Assessment performance
-- Mastery improvement
-- Learning gain
-- Recommendation effectiveness
-
-The goal is to measure whether personalization actually improves the learning experience rather than simply demonstrating that individual AI components work.
-
----
-
-## 🎯 Vision
-
-The long-term goal is to create a learning assistant that can understand more than just the question currently being asked.
-
-Instead of only answering:
-
-> "What is this?"
-
-the platform aims to help answer:
-
-- "What should I learn next?"
-- "What do I already know?"
-- "How deeply should this be explained to me?"
-- "Did I actually understand it?"
-- "What should I work on after this?"
-
-The combination of Machine Learning, RAG, and Generative AI allows each technology to handle a different part of the learning process.
-
-```text
-Machine Learning
-"What should I learn?"
-
-        ↓
-
-RAG
-"What relevant knowledge should be used?"
-
-        ↓
-
-LLM
-"How should it be explained?"
-
-        ↓
-
-Assessment
-"Did the learner understand?"
-
-        ↓
-
-Learner Model
-"What do we know about the learner now?"
-
-        ↓
-
-Machine Learning
-"What should the learner learn next?"
-```
-
----
-
-## 🚀 Future Direction
-
-The next stages of development focus on connecting the existing RAG system with the learner model, recommendation engine, backend, and frontend.
-
-Future development will focus on:
-
-- Better learner modeling
-- More accurate recommendations
-- Improved retrieval
-- Adaptive explanations
-- Assessment-driven personalization
-- Stronger feedback loops
-- Better evaluation
-- Production deployment
-
-As development progresses, this README will be updated alongside the application.
-
----
-
-## 👨‍💻 Author
-
-**Udayan Kar**
-
-An independently developed project focused on exploring Artificial Intelligence, Machine Learning, Generative AI, RAG systems, recommendation systems, and full-stack application development.
+The goal is to build something more meaningful than another question-answering chatbot: an assistant that can eventually help learners understand not only what they are studying, but also how they can improve.
