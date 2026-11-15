@@ -177,7 +177,7 @@ The project uses a combination of frontend, backend, database, and AI technologi
 | FAISS | Finding relevant passages from uploaded documents. |
 | Scikit-learn | Machine Learning experimentation and development. |
 
-For the complete architecture, installation instructions, environment configuration, and implementation details, see the [technical documentation](../README.md).
+For the complete architecture, installation instructions, environment configuration, and implementation details, see the [technical documentation](README-technical.md).
 
 ---
 
@@ -233,7 +233,7 @@ The intention is to develop these features progressively, with measurable result
 
 Want to explore or run the project locally?
 
-Visit the [main project README](../README.md) for:
+Visit the [technical documentation](README-technical.md) for:
 
 - Prerequisites.
 - Installation instructions.
