@@ -13,6 +13,9 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from starlette.requests import Request
 
 rag_stub = types.ModuleType("Rag.rag")
@@ -23,6 +26,8 @@ with patch.dict(sys.modules, {"Rag.rag": rag_stub, "Rag.ingest": ingest_stub}):
     from App.Routers import auth, chat, documents
     from App import oauth2
     from App.database import get_db
+    from App.base import Base
+    from App.models import User
     from App.csrf import configure_csrf_protection, create_csrf_token
     from Rag import user_storage
 
@@ -81,7 +86,26 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
             Email="other@example.com",
             Created_at=datetime.now(UTC),
         )
-        self.app.dependency_overrides[get_db] = lambda: FakeDB(self.user, self.other_user)
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        with self.Session() as session:
+            session.add_all([
+                User(ID=7, Name=self.user.Name, Email=self.user.Email, Password="hashed"),
+                User(ID=8, Name=self.other_user.Name, Email=self.other_user.Email, Password="hashed"),
+            ])
+            session.commit()
+
+        def get_test_db():
+            with self.Session() as session:
+                yield session
+
+        self.app.dependency_overrides[get_db] = get_test_db
+        self.addCleanup(self.engine.dispose)
         self.client = TestClient(self.app)
         self.temp_dir = TemporaryDirectory(dir=os.getcwd())
         self.documents_root_patch = patch.object(
@@ -291,10 +315,15 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         response = self._upload(cookies=cookies, data={"user_id": "8"})
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["filename"], "notes.pdf")
-        self.build_rag_mock.assert_called_once_with(7)
         stored_pdfs = list((Path(self.temp_dir.name) / "documents" / "user_7").glob("*.pdf"))
         self.assertEqual(len(stored_pdfs), 1)
         self.assertNotEqual(stored_pdfs[0].name, "notes.pdf")
+        self.build_rag_mock.assert_called_once()
+        self.assertEqual(self.build_rag_mock.call_args.args, (7,))
+        self.assertEqual(
+            self.build_rag_mock.call_args.kwargs["eligible_storage_filenames"],
+            {stored_pdfs[0].name},
+        )
 
     def test_no_answer_preserves_intended_503(self):
         self.ask_question_mock.return_value = (None, [])

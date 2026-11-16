@@ -149,8 +149,8 @@ def _release_file_lock(handle) -> None:
 
 @asynccontextmanager
 async def per_user_upload_lock(lock_path: Path):
-    # Nonblocking OS locks coordinate quota checks across application workers.
-    # They cover only staging and PDF publication, never FAISS ingestion.
+    # Nonblocking OS locks coordinate same-user upload and delete operations
+    # across application workers, including their FAISS index rebuilds.
     while True:
         try:
             handle = _try_acquire_file_lock(lock_path)

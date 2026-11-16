@@ -38,12 +38,17 @@ def Rebuild_vector_store(pdf_files, user_id: int) :
 
     return index, all_chunks
 
-def Build_rag(user_id: int) :
+def Build_rag(user_id: int, eligible_storage_filenames=None) :
     documents_dir, storage_dir = Get_user_paths(user_id)
     documents_dir.mkdir(parents=True, exist_ok=True)
     pdf_files = sorted(
         path for path in documents_dir.iterdir()
-        if path.is_file() and path.suffix.lower() == ".pdf"
+        if path.is_file()
+        and path.suffix.lower() == ".pdf"
+        and (
+            eligible_storage_filenames is None
+            or path.name in eligible_storage_filenames
+        )
     )
     metadata = Load_document_metadata(user_id)
     if not pdf_files :
@@ -74,7 +79,18 @@ def Build_rag(user_id: int) :
 
         return index, chunks
 
-    index, chunks = Load_vector_store(user_id)
+    try:
+        index, chunks = Load_vector_store(user_id)
+    except (FileNotFoundError, ValueError):
+        # A prior interrupted two-file save is treated as unavailable and rebuilt
+        # from the PDFs that are still present for this user.
+        index, chunks = Rebuild_vector_store(pdf_files, user_id)
+        metadata = {}
+        for pdf_file in pdf_files:
+            _, file_hash = Document_status(str(pdf_file), user_id)
+            metadata[pdf_file.name] = file_hash
+        Save_document_metadata(metadata, user_id)
+        return index, chunks
     if index is None :
         print("\nNo existing vector store found.")
         statuses = {pdf_file: ("new", statuses[pdf_file][1]) for pdf_file in pdf_files}

@@ -1,8 +1,9 @@
 from sqlalchemy import (
-    String, func, TIMESTAMP, ForeignKey, JSON, Index, UniqueConstraint, CheckConstraint,
+    BigInteger, String, func, TIMESTAMP, ForeignKey, JSON, Index, UniqueConstraint, CheckConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
+import uuid
 from .base import Base
 
 class User(Base):
@@ -12,6 +13,37 @@ class User(Base):
     Email : Mapped[str] = mapped_column(String(255) , unique=True , index=True , nullable=False)
     Password : Mapped[str] = mapped_column(String(255) , nullable=False)
     Created_at : Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True),nullable=False,server_default=func.now())
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint("user_id", "storage_filename", name="uq_documents_user_storage_filename"),
+        CheckConstraint(
+            "status IN ('PROCESSING', 'READY', 'FAILED', 'DELETING')",
+            name="ck_documents_status",
+        ),
+        CheckConstraint("file_size_bytes >= 0", name="ck_documents_file_size_nonnegative"),
+        CheckConstraint("page_count IS NULL OR page_count >= 0", name="ck_documents_page_count_nonnegative"),
+        Index("ix_documents_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.ID", ondelete="CASCADE"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(120), nullable=False)
+    storage_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    page_count: Mapped[int | None] = mapped_column(nullable=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class AnswerCache(Base):

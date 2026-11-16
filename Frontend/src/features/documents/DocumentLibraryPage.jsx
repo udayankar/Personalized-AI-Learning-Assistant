@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   UploadCloud,
@@ -9,16 +9,32 @@ import {
   Info,
   ShieldCheck,
   FileCheck,
+  Trash2,
+  Eye,
+  X,
 } from 'lucide-react';
 import {
+  deleteDocument,
+  fetchDocumentDetails,
+  fetchDocuments,
   uploadDocument,
+  selectCatalogError,
+  selectCatalogStatus,
+  selectDeletingDocumentIds,
+  selectDeleteErrors,
+  selectDetailsError,
+  selectDetailsStatus,
+  selectSelectedDocument,
   selectUploadedFiles,
   selectUploadPhase,
   selectUploadProgress,
   selectDocumentError,
   selectLastUploadedFilename,
   clearUploadError,
+  clearDocumentDetails,
+  clearCatalogState,
 } from '../../store/slices/documentSlice';
+import { selectUser } from '../../store/slices/authSlice';
 import { addToast } from '../../store/slices/uiSlice';
 import Button from '../../components/Button/Button';
 import Alert from '../../components/Alert/Alert';
@@ -28,8 +44,16 @@ import styles from './DocumentLibraryPage.module.css';
 export default function DocumentLibraryPage() {
   const dispatch = useDispatch();
   const fileInputRef = useRef(null);
+  const user = useSelector(selectUser);
 
   const uploadedFiles = useSelector(selectUploadedFiles);
+  const catalogStatus = useSelector(selectCatalogStatus);
+  const catalogError = useSelector(selectCatalogError);
+  const selectedDocument = useSelector(selectSelectedDocument);
+  const detailsStatus = useSelector(selectDetailsStatus);
+  const detailsError = useSelector(selectDetailsError);
+  const deletingDocumentIds = useSelector(selectDeletingDocumentIds);
+  const deleteErrors = useSelector(selectDeleteErrors);
   const uploadPhase = useSelector(selectUploadPhase);
   const uploadProgress = useSelector(selectUploadProgress);
   const documentError = useSelector(selectDocumentError);
@@ -38,10 +62,16 @@ export default function DocumentLibraryPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [clientError, setClientError] = useState('');
+  const [documentToDelete, setDocumentToDelete] = useState(null);
 
   const isUploading = uploadPhase === 'uploading';
   const isIndexing = uploadPhase === 'indexing';
   const isBusy = isUploading || isIndexing;
+
+  useEffect(() => {
+    if (user?.ID) dispatch(fetchDocuments(user.ID));
+    else dispatch(clearCatalogState());
+  }, [dispatch, user?.ID]);
 
   const handleFileSelection = (file) => {
     setClientError('');
@@ -69,6 +99,7 @@ export default function DocumentLibraryPage() {
     dispatch(uploadDocument({ file }))
       .unwrap()
       .then((data) => {
+        if (user?.ID) dispatch(fetchDocuments(user.ID));
         dispatch(
           addToast({
             type: 'success',
@@ -113,10 +144,45 @@ export default function DocumentLibraryPage() {
   };
 
   const formatFileSize = (bytes) => {
-    if (!bytes) return 'Unknown size';
+    if (bytes == null) return 'Unavailable size';
+    if (bytes === 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const formatDate = (value) => {
+    if (!value) return 'Date unavailable';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString();
+  };
+
+  const handleDocumentDetails = (document) => {
+    if (selectedDocument?.id === document.id) {
+      dispatch(clearDocumentDetails());
+      return;
+    }
+    if (user?.ID) dispatch(fetchDocumentDetails({ documentId: document.id, userId: user.ID }));
+  };
+
+  const handleDelete = () => {
+    if (!documentToDelete || !user?.ID) return;
+    dispatch(deleteDocument({ documentId: documentToDelete.id, userId: user.ID }))
+      .unwrap()
+      .then(() => {
+        dispatch(addToast({ type: 'success', message: `"${documentToDelete.filename}" was deleted.` }));
+        setDocumentToDelete(null);
+      })
+      .catch(() => {
+        if (user?.ID) dispatch(fetchDocuments(user.ID));
+      });
+  };
+
+  const handleRetryDelete = (document) => {
+    if (!user?.ID) return;
+    dispatch(deleteDocument({ documentId: document.id, userId: user.ID }))
+      .unwrap()
+      .catch(() => dispatch(fetchDocuments(user.ID)));
   };
 
   return (
@@ -245,39 +311,123 @@ export default function DocumentLibraryPage() {
         </div>
       )}
 
-      {/* ── Current Session Uploads ─────────────────────────── */}
-      <h2 className={styles.sectionTitle}>Uploaded in This Study Session</h2>
+      <h2 className={styles.sectionTitle}>Your Documents</h2>
 
-      {uploadedFiles.length === 0 ? (
+      {catalogStatus === 'loading' && (
+        <div className={styles.catalogMessage} role="status">Loading your documents…</div>
+      )}
+
+      {catalogStatus === 'failed' && (
+        <div className={styles.catalogError} role="alert">
+          <span>{catalogError}</span>
+          <Button type="button" variant="secondary" size="sm" onClick={() => user?.ID && dispatch(fetchDocuments(user.ID))}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {catalogStatus === 'succeeded' && uploadedFiles.length === 0 && (
         <EmptyState
           icon={FileText}
-          title="No documents uploaded yet in this session"
+          title="No documents uploaded yet"
           description="Upload your syllabus, lecture slides, or textbook notes above to start asking grounded questions."
         />
-      ) : (
-        <div className={styles.documentList} role="list" aria-label="Current session documents">
-          {uploadedFiles.map((doc, idx) => (
-            <div key={`${doc.filename}-${idx}`} className={styles.documentItem} role="listitem">
-              <div className={styles.docInfo}>
-                <FileCheck size={24} className={styles.docIcon} aria-hidden="true" />
-                <div>
-                  <p className={styles.docName}>{doc.filename}</p>
-                  <p className={styles.docMeta}>
-                    {formatFileSize(doc.size)} · Uploaded{' '}
-                    {new Date(doc.uploadedAt).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </p>
-                </div>
-              </div>
+      )}
 
-              <div className={styles.docBadge}>
-                <CheckCircle2 size={12} aria-hidden="true" />
-                <span>Processed for search</span>
+      {catalogStatus === 'succeeded' && uploadedFiles.length > 0 && (
+        <div className={styles.documentList} role="list" aria-label="Your documents">
+          {uploadedFiles.map((doc) => {
+            const isDeleting = deletingDocumentIds.includes(doc.id);
+            const statusLabel = {
+              PROCESSING: 'Processing',
+              READY: 'Ready for search',
+              FAILED: 'Needs attention',
+              DELETING: 'Deletion pending',
+            }[doc.status] || doc.status;
+            return (
+              <div key={doc.id} className={styles.documentItem} role="listitem">
+                <div className={styles.docInfo}>
+                  <FileCheck size={24} className={styles.docIcon} aria-hidden="true" />
+                  <div>
+                    <p className={styles.docName}>{doc.filename}</p>
+                    <p className={styles.docMeta}>
+                      {formatFileSize(doc.file_size_bytes)} · {doc.page_count == null ? 'Pages unavailable' : `${doc.page_count} pages`} · Uploaded {formatDate(doc.uploaded_at)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className={styles.documentActions}>
+                  <span className={`${styles.docBadge} ${doc.status !== 'READY' ? styles.statusMuted : ''}`}>
+                    {doc.status === 'READY' ? <CheckCircle2 size={12} aria-hidden="true" /> : <Clock size={12} aria-hidden="true" />}
+                    <span>{doc.available ? statusLabel : 'File unavailable'}</span>
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={isDeleting}
+                    onClick={() => handleDocumentDetails(doc)}
+                    aria-label={`Details for ${doc.filename}`}
+                  >
+                    <Eye size={14} /> Details
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={isDeleting}
+                    isLoading={isDeleting}
+                    onClick={() => setDocumentToDelete(doc)}
+                    aria-label={`${doc.status === 'DELETING' ? 'Retry deletion of' : 'Delete'} ${doc.filename}`}
+                  >
+                    <Trash2 size={14} /> {doc.status === 'DELETING' ? 'Retry delete' : 'Delete'}
+                  </Button>
+                </div>
+                {deleteErrors[doc.id] && (
+                  <div className={styles.rowError} role="alert">
+                    <span>{deleteErrors[doc.id]}</span>
+                    <button type="button" onClick={() => handleRetryDelete(doc)}>Retry</button>
+                  </div>
+                )}
               </div>
+            );
+          })}
+        </div>
+      )}
+
+      {(detailsStatus !== 'idle' || selectedDocument) && (
+        <section className={styles.detailsPanel} aria-labelledby="document-details-title" aria-live="polite">
+          <div className={styles.detailsHeader}>
+            <h3 id="document-details-title">Document details</h3>
+            <button type="button" className={styles.iconButton} onClick={() => dispatch(clearDocumentDetails())} aria-label="Close document details">
+              <X size={18} />
+            </button>
+          </div>
+          {detailsStatus === 'loading' && <p role="status">Loading document details…</p>}
+          {detailsStatus === 'failed' && <p role="alert">{detailsError || 'Document details are unavailable.'}</p>}
+          {detailsStatus === 'succeeded' && selectedDocument && (
+            <dl className={styles.detailsGrid}>
+              <dt>Filename</dt><dd>{selectedDocument.filename}</dd>
+              <dt>Uploaded</dt><dd>{formatDate(selectedDocument.uploaded_at)}</dd>
+              <dt>Last updated</dt><dd>{formatDate(selectedDocument.updated_at)}</dd>
+              <dt>Size</dt><dd>{formatFileSize(selectedDocument.file_size_bytes)}</dd>
+              <dt>Pages</dt><dd>{selectedDocument.page_count == null ? 'Unavailable' : selectedDocument.page_count}</dd>
+              <dt>Status</dt><dd>{selectedDocument.available ? selectedDocument.status : 'File unavailable'}</dd>
+            </dl>
+          )}
+        </section>
+      )}
+
+      {documentToDelete && (
+        <div className={styles.confirmBackdrop}>
+          <section className={styles.confirmDialog} role="alertdialog" aria-modal="true" aria-labelledby="delete-document-title" aria-describedby="delete-document-description">
+            <h3 id="delete-document-title">Delete {documentToDelete.filename}?</h3>
+            <p id="delete-document-description">This removes the PDF from your library and rebuilds your search index. This action cannot be undone.</p>
+            <div className={styles.confirmActions}>
+              <Button type="button" variant="secondary" onClick={() => setDocumentToDelete(null)}>Cancel</Button>
+              <Button type="button" variant="primary" onClick={handleDelete}>Delete document</Button>
             </div>
-          ))}
+          </section>
         </div>
       )}
 
@@ -285,10 +435,9 @@ export default function DocumentLibraryPage() {
       <div className={styles.limitationBanner} role="note">
         <Info size={20} className={styles.limitationIcon} aria-hidden="true" />
         <p className={styles.limitationText}>
-          <strong>Knowledge Base Storage Architecture:</strong> Uploaded documents are stored in a
-          knowledge base scoped to your authenticated account. The backend currently stores files and
-          the FAISS index on disk, but does not yet expose remote file browsing or deletion endpoints.
-          Documents listed above represent files uploaded during your active browser session.
+          <strong>Knowledge Base Storage:</strong> Your PDFs and their local FAISS search index are stored on
+          the backend host in storage scoped to your authenticated account. The library shows server-side
+          document metadata; file availability depends on that local storage.
         </p>
       </div>
     </div>

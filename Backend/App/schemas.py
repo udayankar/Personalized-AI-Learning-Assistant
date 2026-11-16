@@ -26,6 +26,27 @@ class Query_Ans(BaseModel) :
     claims: list[AnswerClaim] = Field(default_factory=list)
     sources : list[Source]
 
+
+class DocumentSummary(BaseModel):
+    id: str
+    filename: str
+    uploaded_at: datetime
+    updated_at: datetime
+    file_size_bytes: int
+    page_count: int | None
+    status: Literal["PROCESSING", "READY", "FAILED", "DELETING"]
+    available: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentList(BaseModel):
+    documents: list[DocumentSummary]
+
+
+class DocumentDetails(DocumentSummary):
+    pass
+
 class Signup_User(BaseModel) :
     Name : str = Field(min_length=1 , max_length=100)
     Email : EmailStr

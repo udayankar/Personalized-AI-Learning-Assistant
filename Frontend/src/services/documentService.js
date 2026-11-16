@@ -1,24 +1,34 @@
 /**
  * Document Service
  *
- * Wraps the PDF document upload endpoint.
+ * Wraps the authenticated document catalog and upload endpoints.
  *
  * Backend contract (verified against Backend/App/Routers/documents.py):
- *   POST /documents/upload
- *   Request:  multipart/form-data — field name: "file"
- *   Response: 201 { message: string, filename: string }
- *   Errors:
- *     400 - No file / not PDF / invalid content type
- *     409 - Filename already exists in this user's documents directory
- *     500 - Failed to upload and process (FAISS indexing error)
+ *   GET    /documents
+ *   GET    /documents/{id}
+ *   DELETE /documents/{id}
+ *   POST   /documents/upload
  *
  * Note:
  * - The backend performs synchronous FAISS re-indexing before returning 201.
  *   This can take several seconds for large PDFs.
- * - There is NO document listing or deletion endpoint in the current backend.
  */
 
 import apiClient from './apiClient';
+
+export async function getDocuments() {
+  const response = await apiClient.get('/documents');
+  return response.data.documents;
+}
+
+export async function getDocument(documentId) {
+  const response = await apiClient.get(`/documents/${encodeURIComponent(documentId)}`);
+  return response.data;
+}
+
+export async function deleteDocument(documentId) {
+  await apiClient.delete(`/documents/${encodeURIComponent(documentId)}`, { timeout: 120000 });
+}
 
 /**
  * Upload a PDF document to the knowledge base.

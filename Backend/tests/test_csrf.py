@@ -3,6 +3,7 @@ import secrets
 import sys
 import types
 import unittest
+import uuid
 from io import BytesIO
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +56,13 @@ class FakeResult:
     def scalar_one_or_none(self):
         return self.user
 
+class FakeScalarList:
+    def __init__(self, values):
+        self.values = values
+
+    def all(self):
+        return self.values
+
 class FakeQuery:
     def __init__(self, users):
         self.users = users
@@ -77,6 +85,7 @@ class FakeDB:
         self.execute_count = 0
         self.add_count = 0
         self.commit_count = 0
+        self.documents = []
 
     def query(self, *_args):
         return FakeQuery(list(self.users))
@@ -85,13 +94,25 @@ class FakeDB:
         self.execute_count += 1
         return FakeResult(self.user)
 
-    def add(self, _item):
+    def scalars(self, *_args):
+        return FakeScalarList([
+            item.storage_filename for item in self.documents
+            if item.user_id == 7 and item.status in {"PROCESSING", "READY"}
+        ])
+
+    def add(self, item):
         self.add_count += 1
+        if hasattr(item, "storage_filename"):
+            item.id = item.id or str(uuid.uuid4())
+            self.documents.append(item)
 
     def commit(self):
         self.commit_count += 1
 
     def refresh(self, _item):
+        return None
+
+    def rollback(self):
         return None
 
 class CsrfProtectionTests(unittest.TestCase):
@@ -194,6 +215,15 @@ class CsrfProtectionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.ask_question.assert_not_called()
 
+    def test_document_delete_requires_csrf_before_delete_logic(self):
+        self._login()
+        response = self.client.delete(
+            "/documents/00000000-0000-0000-0000-000000000001",
+            headers=self._origin_headers(),
+        )
+        self.assertEqual(response.status_code, 403)
+        self.build_rag.assert_not_called()
+
     def test_invalid_signed_csrf_token_is_rejected_before_chat_logic(self):
         self._login()
         self.client.cookies.set("csrf_token", "not-a-signed-token")
@@ -285,7 +315,9 @@ class CsrfProtectionTests(unittest.TestCase):
             headers=self._origin_headers(token),
         )
         self.assertEqual(upload_response.status_code, 201)
-        self.build_rag.assert_called_once_with(self.user.ID)
+        self.build_rag.assert_called_once()
+        self.assertEqual(self.build_rag.call_args.args, (self.user.ID,))
+        self.assertEqual(len(self.build_rag.call_args.kwargs["eligible_storage_filenames"]), 1)
 
     def test_safe_get_does_not_require_csrf_header_or_origin(self):
         self._login()

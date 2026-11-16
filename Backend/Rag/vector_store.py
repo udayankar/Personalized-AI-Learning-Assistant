@@ -25,12 +25,20 @@ def Search(index , query_embedding , k=5):
 
     return distances[0] , indices[0]
 
-def Retrieve(query, index, chunks, model, user_id: int, k=5):
+def Retrieve(query, index, chunks, model, user_id: int, k=5, allowed_document_ids=None):
     threshold = Get_calibrated_relevance_threshold()
     if index is None or not chunks or index.ntotal == 0 or k <= 0:
         return Make_retrieval_result(query, user_id, [], threshold)
     query_embedding = model.encode(query)
-    distances, indices = Search(index, query_embedding, k)
+    search_k = k
+    if allowed_document_ids is not None:
+        excluded_count = sum(
+            1 for chunk in chunks
+            if not isinstance(chunk, dict)
+            or chunk.get("document_id", chunk.get("source")) not in allowed_document_ids
+        )
+        search_k = min(index.ntotal, k + excluded_count)
+    distances, indices = Search(index, query_embedding, search_k)
     results = []
 
     for distance, index_number in zip(distances, indices):
@@ -41,7 +49,14 @@ def Retrieve(query, index, chunks, model, user_id: int, k=5):
         chunk = chunks[index_number]
         if not isinstance(chunk, dict) or "text" not in chunk:
             continue
+        if (
+            allowed_document_ids is not None
+            and chunk.get("document_id", chunk.get("source")) not in allowed_document_ids
+        ):
+            continue
         results.append({**chunk, "distance": float(distance)})
+        if len(results) >= k:
+            break
 
     return Make_retrieval_result(query, user_id, results, threshold)
 

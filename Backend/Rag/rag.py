@@ -3,6 +3,9 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from sqlalchemy import select
+from App.database import SessionLocal
+from App.models import Document
 
 from . import answer_cache, generator
 from .answering import Validate_claim_verification, Validate_evidence_assessment
@@ -28,6 +31,16 @@ DOCUMENT_ANSWER_UNRELIABLE = "DOCUMENT_ANSWER_UNRELIABLE"
 GENERAL_KNOWLEDGE_UNRELIABLE = "GENERAL_KNOWLEDGE_UNRELIABLE"
 EVIDENCE_ASSESSMENT_FAILED = "EVIDENCE_ASSESSMENT_FAILED"
 logger = logging.getLogger(__name__)
+
+
+def get_ready_document_filenames(user_id: int) -> set[str]:
+    with SessionLocal() as session:
+        return set(session.scalars(
+            select(Document.storage_filename).where(
+                Document.user_id == user_id,
+                Document.status == "READY",
+            )
+        ).all())
 
 
 FALLBACK_MESSAGES = {
@@ -271,7 +284,16 @@ def _answer_from_cache(payload):
 
 def _ask_question(question, user_id: int):
     index, chunks = Load_vector_store(user_id)
-    retrieval = Retrieve(question, index, chunks, model, user_id, k=5)
+    ready_document_ids = get_ready_document_filenames(user_id)
+    retrieval = Retrieve(
+        question,
+        index,
+        chunks,
+        model,
+        user_id,
+        k=5,
+        allowed_document_ids=ready_document_ids,
+    )
     cache_key = None
     try:
         pipeline_version = answer_cache.Pipeline_fingerprint(

@@ -82,11 +82,19 @@ class RagUserIsolationTests(unittest.TestCase):
         self.cache_store_patch = patch.object(rag.answer_cache, "Store", return_value=False)
         self.cache_store_patch.start()
         self.addCleanup(self.cache_store_patch.stop)
+        self.ready_documents = {}
+        self.ready_documents_patch = patch.object(
+            rag, "get_ready_document_filenames",
+            side_effect=lambda user_id: self.ready_documents.get(user_id, set()),
+        )
+        self.ready_documents_patch.start()
+        self.addCleanup(self.ready_documents_patch.stop)
 
     def _write_document(self, user_id, filename, contents):
         documents_dir, _ = user_storage.Get_user_paths(user_id)
         documents_dir.mkdir(parents=True, exist_ok=True)
         (documents_dir / filename).write_bytes(contents)
+        self.ready_documents.setdefault(user_id, set()).add(filename)
 
     def _mock_process(self, path, user_id):
         user_name = path.parent.name
@@ -153,6 +161,20 @@ class RagUserIsolationTests(unittest.TestCase):
         self.assertEqual(index_b.ntotal, 1)
         self.assertEqual(chunks_a[0]["text"], "user_101")
         self.assertEqual(chunks_b[0]["text"], "user_202")
+
+    def test_catalog_eligibility_excludes_failed_or_deleting_pdfs_from_rebuild(self):
+        self._write_document(101, "ready.pdf", b"ready document")
+        documents_dir, _ = user_storage.Get_user_paths(101)
+        (documents_dir / "failed.pdf").write_bytes(b"failed document")
+        (documents_dir / "deleting.pdf").write_bytes(b"deleting document")
+
+        with patch.object(ingest, "Process_document", side_effect=self._mock_process) as process:
+            ingest.Build_rag(101, eligible_storage_filenames={"ready.pdf"})
+
+        process.assert_called_once()
+        self.assertEqual(process.call_args.args[0].name, "ready.pdf")
+        _, chunks = vector_store.Load_vector_store(101)
+        self.assertEqual({chunk["document_id"] for chunk in chunks}, {"ready.pdf"})
 
     def test_concurrent_ingestion_writes_independent_user_indexes(self):
         self._write_document(101, "a.pdf", b"owner A")
@@ -343,6 +365,7 @@ class RagUserIsolationTests(unittest.TestCase):
             "document_id": "unrelated-doc",
             "user_id": 101,
         }]
+        self.ready_documents.setdefault(101, set()).add("unrelated-doc")
         vector_store.Save_vector_store(index, chunks, 101)
         rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
         generator = Mock(return_value={

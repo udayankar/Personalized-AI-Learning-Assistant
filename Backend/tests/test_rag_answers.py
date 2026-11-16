@@ -45,6 +45,13 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.cache_store_patch.start()
         self.addCleanup(self.cache_store_patch.stop)
         rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
+        self.ready_documents = {}
+        self.ready_documents_patch = patch.object(
+            rag, "get_ready_document_filenames",
+            side_effect=lambda user_id: self.ready_documents.get(user_id, set()),
+        )
+        self.ready_documents_patch.start()
+        self.addCleanup(self.ready_documents_patch.stop)
         self.assessment_patch = patch.object(
             rag, "Assess_document_evidence", return_value=self._assessment()
         )
@@ -106,6 +113,9 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
     def _save_chunks(self, user_id, chunks, vectors=None):
         for chunk in chunks:
             chunk.setdefault("user_id", user_id)
+        self.ready_documents.setdefault(user_id, set()).update(
+            chunk.get("document_id", chunk.get("source")) for chunk in chunks
+        )
         if vectors is None:
             vectors = np.array([[0.1, 0.0] for _ in chunks], dtype="float32")
         vector_store.Save_vector_store(vector_store.Create_vector_store(vectors), chunks, user_id)

@@ -169,6 +169,7 @@
 
 .documentItem {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   background-color: var(--color-white);
@@ -216,6 +217,141 @@
   background-color: var(--color-success-100);
   padding: 2px var(--space-2);
   border-radius: var(--radius-full);
+}
+
+.documentActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.statusMuted {
+  color: var(--color-text-muted);
+  background-color: var(--color-cream-100);
+}
+
+.catalogMessage,
+.catalogError {
+  margin-bottom: var(--space-6);
+  color: var(--color-text-muted);
+}
+
+.catalogError,
+.rowError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger-200, var(--color-border));
+  border-radius: var(--radius-md);
+  color: var(--color-danger-700, var(--color-text-muted));
+  background: var(--color-white);
+}
+
+.rowError {
+  flex-basis: 100%;
+  font-size: var(--text-xs);
+}
+
+.rowError button,
+.iconButton {
+  border: 0;
+  color: var(--color-navy-800);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.detailsPanel {
+  margin-bottom: var(--space-8);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+}
+
+.detailsHeader,
+.confirmActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.detailsHeader h3,
+.confirmDialog h3 {
+  margin: 0;
+  color: var(--color-navy-800);
+  font-size: var(--text-lg);
+}
+
+.detailsGrid {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0 0;
+}
+
+.detailsGrid dt {
+  color: var(--color-text-muted);
+}
+
+.detailsGrid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-navy-800);
+}
+
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: rgb(15 23 42 / 45%);
+}
+
+.confirmDialog {
+  width: min(100%, 440px);
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  box-shadow: var(--shadow-lg);
+}
+
+.confirmDialog p {
+  margin: var(--space-3) 0 var(--space-5);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-relaxed);
+}
+
+.confirmActions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .documentItem {
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .documentActions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .detailsGrid {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+
+  .detailsGrid dd {
+    margin-bottom: var(--space-2);
+  }
 }
 
 /* ── Limitations Notice ── */
