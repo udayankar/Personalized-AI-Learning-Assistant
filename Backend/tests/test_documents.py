@@ -222,7 +222,7 @@ class DocumentsUploadTests(unittest.TestCase):
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
 
-    def _rebuild_index(self, user_id, eligible_storage_filenames=None):
+    def _rebuild_index(self, user_id, eligible_storage_filenames=None, document_hashes=None, *, lock_held=False):
         import numpy as np
 
         vector_store = self._vector_store()
@@ -286,7 +286,8 @@ class DocumentsUploadTests(unittest.TestCase):
         other, other_path = self._seed_document(8, "other.pdf")
         self._rebuild_index(7)
         self._rebuild_index(8)
-        other_index_before = (user_storage.Get_user_paths(8)[1] / "index.faiss").read_bytes()
+        other_store_dir = user_storage.Get_user_paths(8)[1]
+        other_manifest_before = (other_store_dir / "manifest.json").read_bytes()
         with self.Session() as session:
             session.add_all([self._cache_row(7), self._cache_row(8)])
             session.commit()
@@ -307,8 +308,8 @@ class DocumentsUploadTests(unittest.TestCase):
             {remaining.storage_filename},
         )
         self.assertEqual(
-            (user_storage.Get_user_paths(8)[1] / "index.faiss").read_bytes(),
-            other_index_before,
+            (other_store_dir / "manifest.json").read_bytes(),
+            other_manifest_before,
         )
         with self.Session() as session:
             self.assertIsNone(session.get(Document, removed.id))

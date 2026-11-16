@@ -1,9 +1,14 @@
+import os
 from pathlib import Path
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-DOCUMENTS_ROOT = BACKEND_DIR / "Data" / "Documents" / "Users"
-STORAGE_ROOT = BACKEND_DIR / "Storage" / "Users"
+DOCUMENTS_ROOT = Path(os.getenv(
+    "DOCUMENTS_ROOT", str(BACKEND_DIR / "Data" / "Documents" / "Users")
+)).expanduser()
+STORAGE_ROOT = Path(os.getenv(
+    "RAG_STORAGE_ROOT", str(BACKEND_DIR / "Storage" / "Users")
+)).expanduser()
 
 
 def Get_user_paths(user_id: int) -> tuple[Path, Path]:

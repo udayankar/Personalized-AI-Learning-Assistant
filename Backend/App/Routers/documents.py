@@ -75,14 +75,15 @@ def _document_response(document: models.Document, user_id: int) -> dict:
     }
 
 
-def _indexed_storage_filenames(db: Session, user_id: int) -> set[str]:
-    """Return catalog files eligible for inclusion in the user's index."""
-    return set(db.scalars(
-        select(models.Document.storage_filename).where(
+def _indexed_document_hashes(db: Session, user_id: int) -> dict[str, str]:
+    """Return catalog PDF hashes eligible for inclusion in the user's index."""
+    rows = db.execute(
+        select(models.Document.storage_filename, models.Document.sha256).where(
             models.Document.user_id == user_id,
             models.Document.status.in_(("PROCESSING", "READY")),
         )
-    ).all())
+    ).all()
+    return {filename: digest for filename, digest in rows}
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
@@ -199,10 +200,13 @@ async def Upload_Document(
 
             # Keep the existing per-user file lock through index rebuilding so
             # another upload or delete cannot rebuild the same user's index at once.
+            catalog_hashes = _indexed_document_hashes(db, current_user.ID)
             await run_in_threadpool(
                 Build_rag,
                 current_user.ID,
-                eligible_storage_filenames=_indexed_storage_filenames(db, current_user.ID),
+                eligible_storage_filenames=set(catalog_hashes),
+                document_hashes=catalog_hashes,
+                lock_held=True,
             )
             document_record.status = "READY"
             db.commit()
@@ -296,10 +300,13 @@ async def Delete_Document(
         try:
             if source_path.exists() and not tombstone_path.exists():
                 os.replace(source_path, tombstone_path)
+            catalog_hashes = _indexed_document_hashes(db, user_id)
             await run_in_threadpool(
                 Build_rag,
                 user_id,
-                eligible_storage_filenames=_indexed_storage_filenames(db, user_id),
+                eligible_storage_filenames=set(catalog_hashes),
+                document_hashes=catalog_hashes,
+                lock_held=True,
             )
         except Exception:
             with suppress(Exception):

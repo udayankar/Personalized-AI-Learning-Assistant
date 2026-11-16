@@ -1,8 +1,8 @@
-﻿# Personalized AI Learning Assistant
+# Personalized AI Learning Assistant
 
 A web application for asking questions about your own PDF study materials, with source excerpts and explicit answer modes.
 
-> **Current scope:** account-based PDF upload and retrieval-augmented question answering. The application does not currently provide learner profiles, recommendations, assessments, mastery tracking, or adaptive learning.
+> **Current scope:** Account-based PDF upload and retrieval-augmented question answering. The application does not currently provide learner profiles, recommendations, assessments, mastery tracking, or adaptive learning.
 
 ## What it does
 
@@ -10,11 +10,11 @@ Students can create an account, upload PDFs, and ask questions about the materia
 
 Responses distinguish among:
 
-- **Document supported** ΓÇö claims are generated from retrieved passages and returned with source excerpts and claim-level citations.
-- **Insufficient confidence** ΓÇö returned with a clear no-information message when no verifiable document-grounded answer can be produced. Gemini is never called to answer from general knowledge.
-- **Temporary processing error** ΓÇö evidence-assessment or answer-generation API failures return HTTP 503 so they are not mistaken for missing document information.
+- **Document supported** — claims are generated from retrieved passages and returned with source excerpts and claim-level citations.
+- **Insufficient confidence** — returned with a clear no-information message when no verifiable document-grounded answer can be produced. Gemini is never called to answer from general knowledge.
+- **Temporary processing error** — evidence-assessment or answer-generation API failures return HTTP 503 so they are not mistaken for missing document information.
 
-Claim verification is model-assisted. The backend checks response structure and citation provenance, but cannot mathematically prove that a passage entails a claim or guarantee the modelΓÇÖs factual correctness.
+Claim verification is model-assisted. The backend checks response structure and citation provenance, but cannot mathematically prove that a passage entails a claim or guarantee the model's factual correctness.
 
 ## Current features
 
@@ -26,7 +26,7 @@ Claim verification is model-assisted. The backend checks response structure and 
 - Evidence assessment, claim generation, model-assisted claim verification, source excerpts, and disclosure of detected contradictions.
 - Document-supported and no-information response modes; technical generation failures are returned as HTTP errors.
 - Exact answer caching scoped to the user, normalized query, current retrieval context, and pipeline fingerprint.
-- PostgreSQL persistence for account and answer-cache records, managed through Alembic migrations.
+- PostgreSQL persistence for accounts, the per-user document catalog, and answer-cache records, managed through Alembic migrations.
 
 ### Current API
 
@@ -38,13 +38,16 @@ Claim verification is model-assisted. The backend checks response structure and 
 | `GET` | `/users/me` | Return the authenticated user profile. |
 | `POST` | `/users/logout` | Expire authentication and CSRF cookies. |
 | `POST` | `/documents/upload` | Upload and index one PDF for the authenticated user. |
+| `GET` | `/documents` | List the authenticated user's documents. |
+| `GET` | `/documents/{document_id}` | Return details for one document owned by the authenticated user. |
+| `DELETE` | `/documents/{document_id}` | Delete one owned document and rebuild that user's index. |
 | `POST` | `/chat/query` | Ask a question and receive an answer, mode, claims, and sources. |
 
-### API examples
+## API examples
 
 The following payloads are illustrative examples of the current schemas, not captured production data. Cookie-authenticated unsafe requests require the `access_token` HttpOnly cookie, the signed `csrf_token` cookie, an exact allowed `Origin`, and a matching `X-CSRF-Token` header. The frontend obtains the CSRF token from `GET /users/csrf` (or the successful login response), keeps the header value in memory, and sends requests with credentials. JavaScript does not read the JWT cookie.
 
-#### Ask a question
+### Ask a question
 
 `POST /chat/query` accepts a JSON body containing one `query` string:
 
@@ -106,7 +109,7 @@ For example, a no-information response has this shape:
 }
 ```
 
-#### Upload a PDF
+### Upload a PDF
 
 `POST /documents/upload` expects `multipart/form-data` with a field named `file`. The browser frontend adds the authentication cookies and CSRF header automatically. For a manual client, provide the authenticated cookies, matching CSRF header, and allowed Origin as described above.
 
@@ -126,12 +129,12 @@ On success the endpoint returns HTTP `201 Created`:
 }
 ```
 
-Verified errors include `400` for an empty/invalid filename, non-PDF extension, or invalid declared media type; `401` for missing or invalid authentication; `403` for a failed Origin/CSRF check; `409` when that user already has a document with the same filename; `422` when the required multipart `file` field is absent; and a generic `500` if storage or processing fails. The application currently has no upload-size limit.
+Verified errors include `400` for an empty or invalid PDF, `401` for missing or invalid authentication, `403` for a failed Origin/CSRF check, `409` when that user already has a document with the same display filename, `413` when a file, page count, or per-user storage limit is exceeded, and `422` when the required multipart `file` field is absent. Unexpected upload processing errors return a generic `500`; incomplete document deletions return `503` and remain retryable. Defaults are 20 MiB per file, 250 pages per PDF, and 200 MiB of PDFs per user. Configure them with `MAX_PDF_UPLOAD_SIZE_BYTES`, `MAX_PDF_PAGE_COUNT`, and `MAX_USER_PDF_STORAGE_BYTES`.
 
 ## Usage walkthrough
 
 1. Create an account or log in. The browser obtains a CSRF token before submitting unsafe requests.
-2. Open **Documents** and upload a PDF. The interface reports the upload and indexing stages; processing extracts text and builds the user's index.
+2. Open **Documents** and upload a PDF. The interface reports the upload and indexing stages; processing extracts text and builds the user's index. The document appears in the account's document library and can be deleted there.
 3. Wait for indexing to finish, then open the chat workspace.
 4. Ask a question about the uploaded material.
 5. Read the answer mode and disclosure. **Document supported** means claims were built from retrieved passages; **not found in your documents** means no verifiable document-supported answer was available. Technical API failures appear as retryable errors.
@@ -156,8 +159,8 @@ No genuine application screenshots, GIFs, or videos are currently checked into t
 flowchart TD
     A[React frontend] --> B[FastAPI API]
     B --> C[JWT authentication and user identity]
-    C --> D[User-specific PDF and FAISS storage]
-    D --> E[Load current chunks and READY document hashes]
+    C --> D[PostgreSQL document catalog and user-specific filesystem storage]
+    D --> E[Load active index version, chunks, and READY document hashes]
     B --> F{Per-user cache lookup}
     E --> F
     F -->|Valid hit| K[Response: answer mode, claims, sources]
@@ -175,22 +178,26 @@ The cache lookup follows loading the user's current index metadata and document 
 
 ## RAG and document processing
 
-1. The authenticated user uploads a PDF.
+1. The authenticated user uploads a PDF. The backend streams it to a staged file, validates it, publishes it in that user's document directory, and records its hash and `PROCESSING` status in PostgreSQL.
 2. `pypdf` extracts text from pages. Pages with no extractable text do not produce chunks.
 3. `RecursiveCharacterTextSplitter` splits each page into 1,000-character chunks with 200-character overlap; page and filename metadata are retained.
-4. SentenceTransformers creates local embeddings. FAISS stores vectors in an `IndexFlatL2` index for that user.
+4. SentenceTransformers creates local embeddings. FAISS stores vectors in an `IndexFlatL2` index for that user. Chunk metadata records the owning user, document ID, and source document hash.
 5. A question is embedded and the five nearest chunks are retrieved. The calibrated squared-L2 cutoff is retained as a retrieval signal, but all top-five candidates reach evidence assessment because held-out threshold recall is limited.
 6. Gemini assesses coverage, drafts claims from the retrieved passages, and separately verifies claims against their cited passages. The backend constructs citations from those retrieved passages and drops or qualifies claims according to verification.
 7. If there is no relevant support or the generated claims cannot be verified, the API returns a no-information response. If an external model call fails, the API returns HTTP 503 instead of disguising the failure as missing information.
 
 The cutoff was calibrated using a small synthetic retrieval fixture. It is not a guarantee of relevance for arbitrary user documents.
 
+PostgreSQL is the runtime source of truth for document ownership, lifecycle status, and PDF hashes. New documents are added incrementally; hash changes or removed catalog documents trigger an index rebuild from eligible PDFs. The legacy `documents.json` reader is retained only by `scripts/backfill_documents.py` for one-time import of older local documents.
+
+Index versions are written under `RAG_STORAGE_ROOT/user_<id>/versions/` with a FAISS index, UTF-8 JSON chunks, and a checksum manifest. An atomic root `manifest.json` selects the active version, so readers load a matching immutable index/metadata pair. Runtime code never deserializes `chunks.pkl`. A trusted legacy store requires explicit migration with `python -m scripts.migrate_legacy_vector_store --user-id <id> --trusted-local-files`; the migration preserves the original legacy files.
+
 ## Security and data isolation
 
-- The authenticated identity comes from the server-validated JWT `sub` claim; request-supplied user IDs are not used to select a userΓÇÖs private store.
+- The authenticated identity comes from the server-validated JWT `sub` claim; request-supplied user IDs are not used to select a user's private store.
 - JWTs are held in HttpOnly cookies and are not exposed to frontend JavaScript.
 - Unsafe cookie-authenticated requests require a valid signed CSRF token and an exact configured Origin. CORS is configured with explicit origins and credentials.
-- PDFs, indexes, chunks, and ingestion metadata are stored under user-specific local filesystem paths. Retrieval and cache queries are also scoped by user ID.
+- PDFs and versioned indexes/chunks are stored under user-specific local filesystem paths. PostgreSQL stores document metadata and lifecycle state. Retrieval and cache queries are also scoped by user ID.
 - PostgreSQL Row-Level Security is **not** implemented. Isolation is enforced in application logic and filesystem paths, not by RLS policies.
 - The answer cache stores generated answers and source data in PostgreSQL. It must be treated as private user content.
 
@@ -213,11 +220,11 @@ A cache lookup occurs after the current index/chunks and READY-document hashes a
 - **Database and migrations:** PostgreSQL, SQLAlchemy, Alembic.
 - **Document/RAG:** `pypdf`, LangChain text splitters, SentenceTransformers (`all-MiniLM-L6-v2`), FAISS CPU.
 - **Generation:** Google Gen AI SDK and Gemini (`gemini-3.6-flash`, as configured in the current source).
-- **Storage:** local filesystem for PDFs, FAISS indexes, chunks, and ingestion metadata.
+- **Storage:** local filesystem for PDFs and immutable FAISS/JSON index versions; PostgreSQL stores the document catalog and answer cache.
 
 ### Development and tests
 
-- Backend tests use Python `unittest` and FastAPIΓÇÖs test client.
+- Backend tests use Python `unittest` and FastAPI's test client.
 - Frontend tests use Jest and React Testing Library.
 - Retrieval and answer-validation evaluation scripts use JSON fixtures.
 
@@ -225,10 +232,11 @@ The project does not currently use a hosted vector database, Redis, or a recomme
 
 ## Database schema
 
-The current PostgreSQL schema contains account and exact-answer-cache records. The cache has a foreign key to its owning user and is deleted when that user row is deleted. The unique cache key is `(user_id, normalized_query_hash, context_fingerprint, pipeline_version)`; check constraints restrict cacheable answer modes and require a nonnegative `gemini_calls` value.
+The current PostgreSQL schema contains accounts, a per-user document catalog, and exact-answer-cache records. Documents and cache rows have foreign keys to their owning user and are deleted when that user row is deleted. The unique cache key is `(user_id, normalized_query_hash, context_fingerprint, pipeline_version)`; check constraints restrict cacheable answer modes and require a nonnegative `gemini_calls` value.
 
 ```mermaid
 erDiagram
+    users ||--o{ documents : owns
     users ||--o{ answer_cache : owns
 
     users {
@@ -237,6 +245,19 @@ erDiagram
         varchar Email UK
         varchar Password
         timestamptz Created_at
+    }
+
+    documents {
+        varchar id PK
+        int user_id FK
+        varchar filename
+        varchar storage_filename
+        bigint file_size_bytes
+        int page_count
+        varchar sha256
+        varchar status
+        timestamptz uploaded_at
+        timestamptz updated_at
     }
 
     answer_cache {
@@ -259,7 +280,7 @@ erDiagram
     }
 ```
 
-`users.ID` is an integer primary key; `Name` is `VARCHAR(100)`, `Email` is `VARCHAR(255)` with a unique index, `Password` is `VARCHAR(255)` containing a password hash, and `Created_at` is a timezone-aware timestamp defaulting to `now()`. `answer_cache` uses a 64-character query hash and context fingerprint, a 128-character pipeline version, JSON `claims` and `sources`, plus the other fields shown above. It also has an expiry index and an index on `user_id`. PDFs, FAISS indexes, chunks, and ingestion metadata are stored on the filesystem, not in PostgreSQL tables.
+`users.ID` is an integer primary key; `Name` is `VARCHAR(100)`, `Email` is `VARCHAR(255)` with a unique index, `Password` is `VARCHAR(255)` containing a password hash, and `Created_at` is a timezone-aware timestamp defaulting to `now()`. `documents.id` is a 36-character string primary key. The `(user_id, storage_filename)` pair is unique, and status is constrained to `PROCESSING`, `READY`, `FAILED`, or `DELETING`. `documents` also has a `(user_id, status)` index. `answer_cache` uses a 64-character query hash and context fingerprint, a 128-character pipeline version, JSON `claims` and `sources`, plus the other fields shown above. It also has an expiry index and an index on `user_id`. PDF bytes, FAISS indexes, and chunk JSON are stored on the filesystem, not in PostgreSQL tables.
 
 ## Setup
 
@@ -272,18 +293,20 @@ erDiagram
 
 ### Backend
 
-In PowerShell:
+In PowerShell, from the repository root:
 
 ```powershell
 cd Backend
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 Copy-Item .env.example .env
 ```
 
-Edit `Backend/.env` and set the required values. The example file contains placeholders only; never commit real secrets.
+`requirements-dev.txt` includes the runtime dependencies from `requirements.txt` and adds development/test tools such as HTTPX and pytest. For a runtime-only install, use `pip install -r requirements.txt` instead.
+
+For local development, edit `Backend/.env` and set the required values. The example file contains placeholders only; never commit real secrets. In production, configure environment variables through the hosting provider's environment-variable settings rather than uploading a local `.env` file.
 
 | Variable | Purpose |
 |---|---|
@@ -298,6 +321,11 @@ Edit `Backend/.env` and set the required values. The example file contains place
 | `CORS_ALLOWED_ORIGINS` | Comma-separated exact frontend origins; production requires explicit origins. |
 | `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN` | Cookie behavior; production requires secure cookies, and `SameSite=None` requires Secure. `COOKIE_DOMAIN` can be empty for local development. |
 | `ANSWER_CACHE_TTL_SECONDS` | Answer-cache lifetime; default is 86400 seconds if unset. |
+| `MAX_PDF_UPLOAD_SIZE_BYTES` | Per-file upload limit; default is 20 MiB. |
+| `MAX_PDF_PAGE_COUNT` | Page limit; default is 250. |
+| `MAX_USER_PDF_STORAGE_BYTES` | Per-user PDF storage limit; default is 200 MiB. |
+| `DOCUMENTS_ROOT` | Root directory for user PDF files; configure durable storage in deployment. |
+| `RAG_STORAGE_ROOT` | Root directory for versioned FAISS indexes and JSON chunks; configure durable storage in deployment. |
 
 Generate secrets with a cryptographically secure random generator. Do not use example values or reuse the JWT key for CSRF signing.
 
@@ -319,7 +347,7 @@ alembic upgrade head
 alembic current
 ```
 
-This allows Alembic to create later tables such as `answer_cache` without recreating `users`. Do not stamp `head` unless the existing database has been checked against every revision it would mark as applied.
+This allows Alembic to create later tables such as `answer_cache` and `documents` without recreating `users`. Do not stamp `head` unless the existing database has been checked against every revision it would mark as applied.
 
 Start the API from `Backend`:
 
@@ -365,17 +393,20 @@ Tests mock external model calls and use local test fixtures where appropriate. T
 
 ## Storage and deployment considerations
 
-By default, the backend stores user PDFs beneath `Backend/Data/Documents/Users/user_<id>/` and indexes, chunks, and metadata beneath `Backend/Storage/Users/user_<id>/`. These directories are local runtime data and are excluded from source control. A deployment with an ephemeral filesystem will lose uploaded documents and indexes when that filesystem is replaced. Preserve these paths with durable storage and include them in an explicit backup/restore plan.
+By default, the backend stores user PDFs beneath `Backend/Data/Documents/Users/user_<id>/` and versioned FAISS indexes and JSON chunks beneath `Backend/Storage/Users/user_<id>/versions/`. The root `manifest.json` atomically selects the active immutable version; its per-version manifest records checksums that bind the FAISS index and chunks together. These directories are local runtime data and are excluded from source control. A deployment with an ephemeral filesystem will lose uploaded documents and indexes when that filesystem is replaced. Preserve both configured roots with durable storage and include them in an explicit backup/restore plan. Old versions are retained for concurrent readers and rollback, so monitor disk use and plan retention before storing large corpora.
 
-The current implementation is a single-application design, not a deployment package: no container, cloud storage, deployment manifest, or production database-role provisioning is included. Configure HTTPS, production cookie settings, exact CORS origins, durable storage, restricted database credentials, and migrations as part of deployment. No live deployment is claimed.
+PostgreSQL is authoritative for document ownership, lifecycle status, and PDF hashes. The legacy `documents.json` file is read only by `scripts/backfill_documents.py` when importing older local documents; it is not used by runtime ingestion. Legacy `chunks.pkl` indexes are not loaded by the application. After verifying the files came from a trusted local installation, migrate an existing user's store from `Backend` with `python -m scripts.migrate_legacy_vector_store --user-id <id> --trusted-local-files`. The script checks the legacy chunks against that user's database catalog and preserves the originals.
+
+At startup, interrupted `PROCESSING` records are marked `FAILED`, abandoned upload/index temporary files are cleaned, and a valid previous manifest can restore a damaged active pointer. `DELETING` rows and tombstones remain retryable through the delete endpoint. Startup recovery currently assumes one application process; deploy one worker until recovery coordination supports multiple workers.
+
+The current implementation is a single-application design, not a deployment package: no container, cloud storage, deployment manifest, or production database-role provisioning is included. Configure HTTPS, production cookie settings, exact CORS origins, durable storage, restricted database credentials, and migrations as part of deployment. Set production environment variables through the hosting provider's configuration interface; do not rely on a checked-in or uploaded development `.env`. No live deployment is claimed.
 
 ## Current limitations
 
 ### Product limitations
 
 - No persistent backend chat history; chat state is held in frontend memory and does not survive a page reload.
-- No complete document management workflow or document listing, replacement, or deletion API. The frontend only lists uploads from the current browser session.
-- Uploads have no configured application-level size limit or per-user quota.
+- No document replacement API. Users can list and delete cataloged documents; each upload has a size limit, page limit, and per-user storage quota.
 
 ### RAG limitations
 
@@ -387,13 +418,13 @@ The current implementation is a single-application design, not a deployment pack
 
 ### Operational limitations
 
-- PDFs, FAISS indexes, chunks, and ingestion metadata are local filesystem data; no distributed/shared storage layer is configured. Ephemeral hosting storage would lose this data.
+- PDFs, FAISS indexes, and chunks are local filesystem data; no distributed/shared storage layer is configured. Ephemeral hosting storage would lose this data.
 - PostgreSQL RLS is not implemented; per-user isolation is enforced by application logic and filesystem paths.
-- The synchronous RAG call and local indexing work can be resource-intensive. Concurrency, upload limits, and deployment hardening need further validation.
+- The synchronous RAG call and local indexing work can be resource-intensive. Multiple application workers are not supported by current startup recovery, and old immutable index versions require disk monitoring.
 
 ## Roadmap
 
-Planned work is separate from current functionality. Future directions may include persistent conversation/document management, better document support and evaluation, andΓÇöafter collecting suitable consent-aware learning dataΓÇölearner profiles, assessments, mastery tracking, and recommendations. None of those learning-personalization features are currently implemented.
+Planned work is separate from current functionality. Future directions may include persistent conversation/document management, better document support and evaluation, and—after collecting suitable consent-aware learning data—learner profiles, assessments, mastery tracking, and recommendations. None of those learning-personalization features are currently implemented.
 
 ## Repository layout
 
@@ -402,21 +433,23 @@ Backend/
   App/
     Routers/       Auth, chat, signup, and document-upload routes
     base.py        Shared SQLAlchemy declarative base
-    models.py      users and answer_cache tables
+    models.py      users, documents, and answer_cache tables
     schemas.py     Request and response schemas
     database.py    SQLAlchemy engine, sessions, and get_db dependency
     csrf.py        CSRF and CORS configuration
   Rag/             PDF ingestion, per-user FAISS retrieval, answer generation, cache
   alembic/
-    versions/      Baseline users and answer-cache migrations
-  scripts/         Retrieval and answer-validation evaluation commands
+    versions/      User, document-catalog, and answer-cache migrations
+  scripts/         RAG evaluators and legacy catalog/vector-store migration tools
   tests/
     fixtures/      Synthetic retrieval and answer-validation datasets
   Data/Documents/  Runtime user PDF paths: Users/user_<id>/
-  Storage/         Runtime index/chunk/metadata paths: Users/user_<id>/
+  Storage/         Runtime versioned index/chunk paths: Users/user_<id>/versions/
   .env.example     Backend configuration template
   alembic.ini      Alembic configuration (credentials are read from .env)
-  requirements.txt Python dependencies
+  requirements.txt Runtime Python dependencies
+  requirements-dev.txt Runtime dependencies plus development/test tools
+
 Frontend/
   src/
     components/    Reusable interface components

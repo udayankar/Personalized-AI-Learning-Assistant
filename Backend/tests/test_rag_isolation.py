@@ -257,6 +257,46 @@ class RagUserIsolationTests(unittest.TestCase):
         _, chunks = vector_store.Load_vector_store(101)
         self.assertEqual({chunk["document_id"] for chunk in chunks}, {"ready.pdf"})
 
+    def test_ingestion_uses_catalog_hashes_and_updates_new_documents_incrementally(self):
+        self._write_document(101, "first.pdf", b"first version")
+        documents_dir, _ = user_storage.Get_user_paths(101)
+        # A malformed legacy manifest must not affect the runtime catalog path.
+        storage_dir = user_storage.Get_user_paths(101)[1]
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        (storage_dir / "documents.json").write_text("not json", encoding="utf-8")
+        catalog = dict(self.ready_documents[101])
+
+        with patch.object(ingest, "Process_document", side_effect=self._mock_process) as process:
+            ingest.Build_rag(101, set(catalog), catalog)
+            self.assertEqual(process.call_count, 1)
+            _, first_chunks = vector_store.Load_vector_store(101)
+            self.assertEqual(first_chunks[0]["document_sha256"], catalog["first.pdf"])
+
+            self._write_document(101, "second.pdf", b"second version")
+            catalog = dict(self.ready_documents[101])
+            process.reset_mock()
+            ingest.Build_rag(101, set(catalog), catalog)
+            process.assert_called_once()
+            self.assertEqual(process.call_args.args[0].name, "second.pdf")
+
+            changed = b"first changed"
+            (documents_dir / "first.pdf").write_bytes(changed)
+            self.ready_documents[101]["first.pdf"] = hashlib.sha256(changed).hexdigest()
+            catalog = dict(self.ready_documents[101])
+            process.reset_mock()
+            ingest.Build_rag(101, set(catalog), catalog)
+            self.assertEqual(
+                {call.args[0].name for call in process.call_args_list},
+                {"first.pdf", "second.pdf"},
+            )
+
+        _, chunks = vector_store.Load_vector_store(101)
+        self.assertEqual({chunk["document_id"] for chunk in chunks}, {"first.pdf", "second.pdf"})
+        self.assertEqual(
+            {chunk["document_id"]: chunk["document_sha256"] for chunk in chunks},
+            catalog,
+        )
+
     def test_concurrent_ingestion_writes_independent_user_indexes(self):
         self._write_document(101, "a.pdf", b"owner A")
         self._write_document(202, "b.pdf", b"owner B")
@@ -401,6 +441,25 @@ class RagUserIsolationTests(unittest.TestCase):
         (storage_dir / "chunks.pkl").write_bytes(b"not a pickle")
         with self.assertRaises(ValueError):
             vector_store.Load_vector_store(406)
+
+    def test_vector_store_versions_are_json_and_immutable(self):
+        user_id = 407
+        chunks = [{"page": 1, "text": "first", "source": "a.pdf", "user_id": user_id}]
+        index = vector_store.Create_vector_store(np.array([[0.0, 0.0]], dtype="float32"))
+        vector_store.Save_vector_store(index, chunks, user_id)
+        _, storage_dir = user_storage.Get_user_paths(user_id)
+        manifest = json.loads((storage_dir / "manifest.json").read_text(encoding="utf-8"))
+        first_version = manifest["active_version"]
+        first_chunks = storage_dir / "versions" / first_version / "chunks.json"
+        self.assertEqual(json.loads(first_chunks.read_text(encoding="utf-8")), chunks)
+        self.assertFalse((storage_dir / "chunks.pkl").exists())
+
+        changed = [{"page": 1, "text": "second", "source": "a.pdf", "user_id": user_id}]
+        vector_store.Save_vector_store(index, changed, user_id)
+        active = json.loads((storage_dir / "manifest.json").read_text(encoding="utf-8"))["active_version"]
+        self.assertNotEqual(active, first_version)
+        self.assertTrue(first_chunks.exists())
+        self.assertEqual(vector_store.Load_vector_store(user_id)[1][0]["text"], "second")
 
     def test_evaluation_dataset_and_calibrated_cutoff_are_explicit(self):
         fixture = Path(__file__).parent / "fixtures" / "rag_evaluation.json"
