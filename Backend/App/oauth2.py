@@ -6,14 +6,12 @@ from datetime import datetime , UTC , timedelta
 from . import models
 from .database import get_db
 from .csrf import SAFE_METHODS , validate_csrf_request
-from dotenv import load_dotenv
-import os
+from .config import get_jwt_settings
 
-load_dotenv()
-
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
+_jwt_settings = get_jwt_settings()
+SECRET_KEY = _jwt_settings.secret_key
+ALGORITHM = _jwt_settings.algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = _jwt_settings.access_token_expire_minutes
 
 def create_access_token(user_id: str):
     if not isinstance(user_id, str) or not user_id.isascii() or not user_id.isdecimal():

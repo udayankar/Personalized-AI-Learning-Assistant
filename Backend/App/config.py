@@ -6,6 +6,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+SUPPORTED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
+MAX_ACCESS_TOKEN_EXPIRE_MINUTES = 24 * 60
+MAX_CSRF_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_MAX_PDF_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024
+DEFAULT_MAX_PDF_PAGE_COUNT = 250
+DEFAULT_MAX_USER_PDF_STORAGE_BYTES = 200 * 1024 * 1024
+
 _PLACEHOLDER_SECRETS = {
     "changeme",
     "change-me",
@@ -22,6 +29,16 @@ _PLACEHOLDER_SECRETS = {
     "your-secret-key",
     "your-secret-key-here",
     "your_csrf_secret_key",
+    "your_jwt_secret_key",
+    "development",
+    "development-secret-key",
+    "dev-secret",
+    "insecure-secret",
+    "jwt-secret",
+    "jwt_secret",
+    "local-secret",
+    "test",
+    "testing",
     "replace-me",
     "replace_me",
     "replace-with-a-dedicated-random-secret-of-at-least-32-bytes",
@@ -30,6 +47,8 @@ _PLACEHOLDER_SECRETS = {
 
 _PLACEHOLDER_PREFIXES = (
     "replace-with-",
+    "replace_with_",
+    "replace-with_",
     "replace-me",
     "replace_me",
     "your-",
@@ -82,6 +101,72 @@ class SecuritySettings:
     cookie_domain: str | None
     cookie_path: str = "/"
 
+
+@dataclass(frozen=True)
+class JwtSettings:
+    secret_key: str
+    algorithm: str
+    access_token_expire_minutes: int
+
+
+@dataclass(frozen=True)
+class UploadSettings:
+    max_pdf_upload_size_bytes: int
+    max_pdf_page_count: int
+    max_user_pdf_storage_bytes: int
+
+
+def _positive_integer_setting(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if not 1 <= parsed <= 2**63 - 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def get_upload_settings() -> UploadSettings:
+    return UploadSettings(
+        max_pdf_upload_size_bytes=_positive_integer_setting(
+            "MAX_PDF_UPLOAD_SIZE_BYTES", DEFAULT_MAX_PDF_UPLOAD_SIZE_BYTES
+        ),
+        max_pdf_page_count=_positive_integer_setting(
+            "MAX_PDF_PAGE_COUNT", DEFAULT_MAX_PDF_PAGE_COUNT
+        ),
+        max_user_pdf_storage_bytes=_positive_integer_setting(
+            "MAX_USER_PDF_STORAGE_BYTES", DEFAULT_MAX_USER_PDF_STORAGE_BYTES
+        ),
+    )
+
+
+def get_jwt_settings() -> JwtSettings:
+    secret_key = os.getenv("SECRET_KEY", "")
+    if not secret_key:
+        raise ValueError("SECRET_KEY must be configured")
+    if len(secret_key.encode("utf-8")) < 32:
+        raise ValueError("SECRET_KEY must contain at least 32 bytes")
+    if _is_predictable_secret(secret_key):
+        raise ValueError("SECRET_KEY must not be a placeholder or predictable value")
+
+    algorithm = os.getenv("ALGORITHM", "")
+    if algorithm not in SUPPORTED_JWT_ALGORITHMS:
+        supported = ", ".join(sorted(SUPPORTED_JWT_ALGORITHMS))
+        raise ValueError(f"ALGORITHM must be one of the supported values: {supported}")
+
+    ttl_value = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "")
+    try:
+        expire_minutes = int(ttl_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be an integer from 1 to 1440") from error
+    if not 1 <= expire_minutes <= MAX_ACCESS_TOKEN_EXPIRE_MINUTES:
+        raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be an integer from 1 to 1440")
+
+    return JwtSettings(secret_key, algorithm, expire_minutes)
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -101,6 +186,8 @@ def get_security_settings() -> SecuritySettings:
     production = environment == "production"
 
     csrf_secret_key = os.getenv("CSRF_SECRET_KEY", "")
+    if not csrf_secret_key:
+        raise ValueError("CSRF_SECRET_KEY must be configured")
     encoded_secret = csrf_secret_key.encode("utf-8")
     if len(encoded_secret) < 32:
         raise ValueError("CSRF_SECRET_KEY must contain at least 32 bytes")
@@ -118,7 +205,7 @@ def get_security_settings() -> SecuritySettings:
         for origin in (origins_value or "http://localhost:1234").split(",")
         if origin.strip()
     )
-    if not origins or "*" in origins:
+    if not origins or any("*" in origin for origin in origins):
         raise ValueError("CORS_ALLOWED_ORIGINS must contain explicit origins")
     for origin in origins:
         parsed_origin = urlsplit(origin)
@@ -133,6 +220,8 @@ def get_security_settings() -> SecuritySettings:
             or origin != f"{parsed_origin.scheme}://{parsed_origin.netloc}"
         ):
             raise ValueError("CORS_ALLOWED_ORIGINS entries must be exact origins without paths")
+        if production and parsed_origin.scheme != "https":
+            raise ValueError("Production CORS_ALLOWED_ORIGINS entries must use HTTPS")
 
     cookie_secure = _env_bool("COOKIE_SECURE", production)
     if production and not cookie_secure:
@@ -148,8 +237,8 @@ def get_security_settings() -> SecuritySettings:
         csrf_token_ttl_seconds = int(ttl_value)
     except ValueError as error:
         raise ValueError("CSRF_TOKEN_TTL_SECONDS must be a positive integer") from error
-    if csrf_token_ttl_seconds <= 0:
-        raise ValueError("CSRF_TOKEN_TTL_SECONDS must be a positive integer")
+    if not 1 <= csrf_token_ttl_seconds <= MAX_CSRF_TOKEN_TTL_SECONDS:
+        raise ValueError("CSRF_TOKEN_TTL_SECONDS must be an integer from 1 to 604800")
 
     return SecuritySettings(
         environment=environment,
@@ -160,3 +249,19 @@ def get_security_settings() -> SecuritySettings:
         cookie_samesite=cookie_samesite,
         cookie_domain=os.getenv("COOKIE_DOMAIN") or None,
     )
+
+
+def validate_production_configuration(settings: SecuritySettings) -> None:
+    if settings.environment != "production":
+        return
+
+    provider_key = os.getenv("LLM_API_KEY", "").strip()
+    placeholder_prefixes = (
+        "replace-with",
+        "replace_with",
+        "your-api-key",
+        "your_api_key",
+        "placeholder",
+    )
+    if not provider_key or provider_key.lower().startswith(placeholder_prefixes):
+        raise ValueError("LLM_API_KEY must contain a configured provider key in production")

@@ -7,7 +7,12 @@ import secrets
 import time
 from fastapi import HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from .config import SecuritySettings, get_security_settings
+from .config import (
+    SecuritySettings,
+    get_jwt_settings,
+    get_security_settings,
+    validate_production_configuration,
+)
 
 CSRF_COOKIE_NAME = "csrf_token"
 PREAUTH_COOKIE_NAME = "csrf_pre_session"
@@ -143,7 +148,9 @@ def require_csrf(request: Request) -> None:
     validate_csrf_request(request, settings=getattr(request.app.state, "csrf_settings", None))
 
 def configure_csrf_protection(app) -> SecuritySettings:
+    get_jwt_settings()
     settings = get_security_settings()
+    validate_production_configuration(settings)
     app.state.csrf_settings = settings
     app.add_middleware(
         CORSMiddleware,

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { selectUser, logoutUser } from '../../store/slices/authSlice';
 import { addToast } from '../../store/slices/uiSlice';
+import { API_BASE_URL } from '../../config';
 import Button from '../../components/Button/Button';
 import styles from './SettingsPage.module.css';
 
@@ -83,8 +84,7 @@ export default function SettingsPage() {
 
         <p className={styles.noticeText}>
           <Info size={12} style={{ display: 'inline', marginRight: '4px' }} />
-          Profile editing and password change endpoints are in active development and will be enabled
-          in a future backend release.
+          Profile editing and password changes are not available yet.
         </p>
       </section>
 
@@ -99,7 +99,7 @@ export default function SettingsPage() {
           <div className={styles.diagnosticRow}>
             <span className={styles.diagnosticKey}>Backend API Base URL</span>
             <span className={styles.diagnosticValue}>
-              {process.env.API_BASE_URL || 'http://localhost:8000'}
+              {API_BASE_URL}
             </span>
           </div>
 
@@ -109,7 +109,7 @@ export default function SettingsPage() {
           </div>
 
           <div className={styles.diagnosticRow}>
-            <span className={styles.diagnosticKey}>Vector Database Index</span>
+            <span className={styles.diagnosticKey}>Local Vector Search Index</span>
             <span className={styles.diagnosticValue}>FAISS (IndexFlatL2)</span>
           </div>
 

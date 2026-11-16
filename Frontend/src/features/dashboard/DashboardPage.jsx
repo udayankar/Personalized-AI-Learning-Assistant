@@ -29,8 +29,9 @@ function DashboardPage() {
         <p className={styles.welcomeGreeting}>{timeGreeting}</p>
         <h2 className={styles.welcomeTitle}>Welcome back, {firstName}.</h2>
         <p className={styles.welcomeSubtitle}>
-          Your AI-powered learning assistant is ready. Upload study materials and
-          ask questions — every answer is grounded in your documents.
+          Your AI-powered learning assistant is ready. Upload study materials and ask questions.
+          The assistant searches your documents first and may use clearly labeled general AI knowledge
+          when document evidence is insufficient.
         </p>
       </div>
 
@@ -48,7 +49,7 @@ function DashboardPage() {
           <p className={styles.actionCardTitle}>Ask a Question</p>
           <p className={styles.actionCardDesc}>
             Ask anything about your study materials. The AI assistant retrieves
-            relevant passages and provides source-cited answers.
+            relevant passages and can include source references when document evidence is available.
           </p>
           <span className={styles.actionArrow} aria-hidden="true">
             <ArrowRight size={18} />
@@ -65,8 +66,7 @@ function DashboardPage() {
           </div>
           <p className={styles.actionCardTitle}>Upload Study Material</p>
           <p className={styles.actionCardDesc}>
-            Add PDF documents to your knowledge base. The assistant will index
-            them and answer questions from their content.
+            Add text-based PDFs to your account's search index. Scanned PDFs are not currently OCR-processed.
           </p>
           <span className={styles.actionArrow} aria-hidden="true">
             <ArrowRight size={18} />
@@ -83,8 +83,8 @@ function DashboardPage() {
             <p className={styles.infoCardTitle}>1. Upload Documents</p>
           </div>
           <p className={styles.infoCardText}>
-            Upload your textbooks, lecture notes, or any PDF study material. The
-            system processes and indexes the content into a searchable knowledge base.
+            Upload text-based textbooks, lecture notes, or other PDFs. Scanned PDFs are not currently
+            OCR-processed. Extracted text is added to your account's searchable index.
           </p>
         </div>
 
@@ -95,29 +95,29 @@ function DashboardPage() {
           </div>
           <p className={styles.infoCardText}>
             Type your question in plain language. The system retrieves the most
-            relevant sections from your uploaded documents.
+            relevant sections from your uploaded documents when available.
           </p>
         </div>
 
         <div className={styles.infoCard}>
           <div className={styles.infoCardHeader}>
             <BookOpen size={20} className={styles.infoCardIcon} aria-hidden="true" />
-            <p className={styles.infoCardTitle}>3. Get Cited Answers</p>
+            <p className={styles.infoCardTitle}>3. Review Answers and Sources</p>
           </div>
           <p className={styles.infoCardText}>
-            Receive AI-generated answers backed by specific passages from your
-            materials, with source filenames and page numbers.
+            Answers may include excerpts from your documents, with filenames and page details when available.
           </p>
         </div>
 
         <div className={styles.infoCard}>
           <div className={styles.infoCardHeader}>
             <Database size={20} className={styles.infoCardIcon} aria-hidden="true" />
-            <p className={styles.infoCardTitle}>Persistent Knowledge Base</p>
+            <p className={styles.infoCardTitle}>Account-Specific Document Storage</p>
           </div>
           <p className={styles.infoCardText}>
-            Uploaded documents persist in the knowledge base across sessions.
-            The vector index is rebuilt automatically when new materials are added.
+            PDFs and their search index are stored on the server's local filesystem. They remain available
+            across sessions while that storage is retained; persistence across deployments depends on the host.
+            New uploads are added to the index after processing.
           </p>
         </div>
 
@@ -127,8 +127,8 @@ function DashboardPage() {
             <p className={styles.infoCardTitle}>RAG-Powered AI</p>
           </div>
           <p className={styles.infoCardText}>
-            Retrieval-Augmented Generation combines semantic search with Gemini's
-            language model — answers come from your documents, not generic knowledge.
+            The assistant searches your documents first. If their evidence is insufficient, it may provide a
+            clearly labeled explanation from general AI knowledge.
           </p>
         </div>
       </div>
@@ -137,8 +137,8 @@ function DashboardPage() {
       <div className={styles.notice} role="note" aria-label="Platform status notice">
         <Info size={18} className={styles.noticeIcon} aria-hidden="true" />
         <p className={styles.noticeText}>
-          <strong>Active Development Notice:</strong> This platform currently supports
-          PDF upload, knowledge base indexing, and RAG-powered Q&A with source citations.
+          <strong>Platform Status:</strong> This platform currently supports
+          PDF upload, knowledge base indexing, and RAG-powered Q&amp;A with source references when available.
           Personalized learning profiles, ML recommendations, and assessment tracking
           are planned for future releases.
         </p>

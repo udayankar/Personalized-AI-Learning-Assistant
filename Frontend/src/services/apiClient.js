@@ -6,8 +6,8 @@
  */
 
 import axios from 'axios';
+import { API_BASE_URL } from '../config';
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000';
 const UNSAFE_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 const CSRF_FAILURE_DETAIL = 'CSRF token is missing or invalid';
 const DEFAULT_CSRF_BOOTSTRAP_TIMEOUT_MS = 10000;

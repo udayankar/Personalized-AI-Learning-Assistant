@@ -31,13 +31,14 @@ export default function LandingPage() {
             </h1>
 
             <p className={styles.heroSubheading}>
-              Connect your lecture notes, textbooks, and syllabus PDFs. Ask questions and get clear,
-              rigorous answers grounded strictly in your verified study materials.
+              Upload text-based lecture notes, textbooks, and syllabus PDFs. Ask questions about them
+              and see when an answer uses document evidence or general AI knowledge. Scanned PDFs are
+              not currently processed with OCR.
             </p>
 
             <div className={styles.heroCtas}>
               <Link to="/signup" className={styles.ctaPrimary}>
-                <span>Start Learning Free</span>
+                <span>Create an Account</span>
                 <ArrowRight size={18} aria-hidden="true" />
               </Link>
               <Link to="/login" className={styles.ctaSecondary}>
@@ -47,7 +48,7 @@ export default function LandingPage() {
 
             <div className={styles.trustBadge}>
               <ShieldCheck size={18} className={styles.trustBadgeIcon} aria-hidden="true" />
-              <span>Every answer cited with document name and exact page numbers</span>
+              <span>Source references are shown when document evidence is available</span>
             </div>
           </div>
 
@@ -59,7 +60,7 @@ export default function LandingPage() {
                   <BookOpen size={24} />
                 </div>
                 <div>
-                  <p className={styles.heroCardTitle}>AI Academic Tutor</p>
+                  <p className={styles.heroCardTitle}>Example Document-Supported Answer</p>
                   <p className={styles.heroCardSubtitle}>Retrieval-Augmented Generation (RAG)</p>
                 </div>
               </div>
@@ -72,14 +73,14 @@ export default function LandingPage() {
               </div>
 
               <div className={styles.heroCardAnswer}>
-                <p className={styles.heroCardAnswerLabel}>Grounded Response</p>
+                <p className={styles.heroCardAnswerLabel}>Illustrative Response</p>
                 <p className={styles.heroCardAnswerText}>
                   Simple thresholding applies a fixed pixel threshold across the entire image. If a pixel's
                   intensity is below the threshold, it is set to 0; otherwise, it is assigned the maximum value.
                 </p>
                 <div className={styles.heroCardSource}>
                   <FileText size={14} />
-                  <p className={styles.heroCardSourceLabel}>Source: opencv-notes.pdf · Page 14</p>
+                  <p className={styles.heroCardSourceLabel}>Example source: opencv-notes.pdf · Page 14</p>
                 </div>
               </div>
             </div>
@@ -94,7 +95,7 @@ export default function LandingPage() {
             <span className={styles.sectionLabel}>Key Capabilities</span>
             <h2 className={styles.sectionHeading}>Engineered for Focused Academic Study</h2>
             <p className={styles.sectionSubheading}>
-              Unlike generic chat bots that hallucinate answers, this assistant operates on your specific course curriculum.
+              The assistant searches your uploaded documents and identifies when it uses general AI knowledge.
             </p>
           </div>
 
@@ -105,7 +106,7 @@ export default function LandingPage() {
               </div>
               <h3 className={styles.featureTitle}>Upload Study Material</h3>
               <p className={styles.featureDescription}>
-                Ingest PDF textbooks, lecture slides, and notes. The backend extracts text, builds semantic embeddings, and stores them in FAISS vector indices.
+                Upload text-based PDFs. Their text is extracted and added to an account-specific local search index; scanned PDFs are not OCR-processed.
               </p>
             </div>
 
@@ -123,9 +124,9 @@ export default function LandingPage() {
               <div className={styles.featureIconWrapper}>
                 <FileCheck size={28} />
               </div>
-              <h3 className={styles.featureTitle}>Verified Source Citations</h3>
+              <h3 className={styles.featureTitle}>Source References</h3>
               <p className={styles.featureDescription}>
-                Every response displays the source document and page number. Inspect excerpts instantly in the side drawer to cross-check explanations.
+                Document-supported responses can include source documents and page details. Review available excerpts to check the answer against the material.
               </p>
             </div>
           </div>
@@ -137,9 +138,9 @@ export default function LandingPage() {
         <div className={styles.sectionInner}>
           <div className={styles.stepsHeader}>
             <span className={styles.sectionLabel}>Simple Workflow</span>
-            <h2 className={styles.sectionHeading}>Three Steps to Master Your Coursework</h2>
+            <h2 className={styles.sectionHeading}>Three Steps to Study with Your Materials</h2>
             <p className={styles.sectionSubheading}>
-              Turn dense PDFs into an interactive personal study partner in seconds.
+              Upload supported PDFs, ask questions, and review answers with available source information.
             </p>
           </div>
 
@@ -148,7 +149,7 @@ export default function LandingPage() {
               <div className={styles.stepNumber}>1</div>
               <h3 className={styles.stepTitle}>Upload PDF Notes</h3>
               <p className={styles.stepDescription}>
-                Drag and drop your syllabus or chapter PDFs into the Document Library to index them into vector storage.
+                Upload text-based syllabus or chapter PDFs to add their content to your account's local search index.
               </p>
             </div>
 
@@ -164,7 +165,7 @@ export default function LandingPage() {
               <div className={styles.stepNumber}>3</div>
               <h3 className={styles.stepTitle}>Review Cited Answers</h3>
               <p className={styles.stepDescription}>
-                Study formatted explanations with markdown, equations, and direct links to the relevant textbook pages.
+                Review AI-generated answers and, when available, the document excerpts they reference.
               </p>
             </div>
           </div>
@@ -178,7 +179,7 @@ export default function LandingPage() {
             <span className={styles.sectionLabel}>Transparency</span>
             <h2 className={styles.sectionHeading}>Current Status &amp; Development Roadmap</h2>
             <p className={styles.sectionSubheading}>
-              We believe in honest architecture. Here is what is live today versus what is actively being built.
+              Here is what is available now and what is planned for future development.
             </p>
           </div>
 
@@ -191,23 +192,27 @@ export default function LandingPage() {
               <ul className={styles.capabilityList}>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
-                  <span>Full PDF upload and automated text chunking with FAISS indexing</span>
+                  <span>Text-based PDF upload and processing for document search; scanned PDFs are not OCR-processed</span>
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
-                  <span>RAG semantic retrieval and Gemini-powered pedagogical explanations</span>
+                  <span>Questions about uploaded PDFs, with document-evidence and general-knowledge answer modes</span>
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
-                  <span>Exact source document tracking with page numbers and text snippets</span>
+                  <span>Source document excerpts and page details when available</span>
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
-                  <span>Secure JWT HttpOnly cookie authentication and account registration</span>
+                  <span>Account signup and login with an HttpOnly JWT cookie and CSRF checks for unsafe browser requests</span>
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
-                  <span>Persistent knowledge base storage on the server across sessions</span>
+                  <span>Account-specific document folders and search indexes on the server; persistence across deployments depends on host storage</span>
+                </li>
+                <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
+                  <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
+                  <span>Local FAISS vector search index for each account</span>
                 </li>
               </ul>
             </div>
@@ -215,7 +220,7 @@ export default function LandingPage() {
             <div className={`${styles.capabilityPanel} ${styles.capabilityPanelDev}`}>
               <h3 className={`${styles.capabilityPanelHeading} ${styles.capabilityPanelHeadingDev}`}>
                 <Clock size={20} className={styles.capabilityIconDev} />
-                <span>In Active Development</span>
+                <span>Planned</span>
               </h3>
               <ul className={styles.capabilityList}>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemDev}`}>
@@ -232,7 +237,7 @@ export default function LandingPage() {
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemDev}`}>
                   <Clock size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconDev}`} />
-                  <span>Per-user document isolation and server-side document file management</span>
+                  <span>Tools to browse, delete, and reprocess uploaded documents</span>
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemDev}`}>
                   <Clock size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconDev}`} />
@@ -249,13 +254,13 @@ export default function LandingPage() {
         <div className={styles.ctaSectionInner}>
           <h2 className={styles.ctaSectionHeading}>Ready to Transform Your Study Experience?</h2>
           <p className={styles.ctaSectionSubtext}>
-            Join the academic study platform that answers your questions using your own course material.
+            Ask questions about your course material and see when an answer uses general AI knowledge.
           </p>
           <Link to="/signup" className={styles.ctaSectionButton}>
             <span>Create Your Account</span>
             <ArrowRight size={18} aria-hidden="true" />
           </Link>
-          <p className={styles.ctaSectionNote}>Free and open-source learning platform</p>
+          <p className={styles.ctaSectionNote}>Independent learning assistant project under development</p>
         </div>
       </section>
     </div>

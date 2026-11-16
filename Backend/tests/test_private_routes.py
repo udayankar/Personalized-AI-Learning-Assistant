@@ -4,10 +4,13 @@ import unittest
 import os
 from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 import jwt
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
@@ -53,6 +56,8 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
             "APP_ENV": "test",
             "CSRF_SECRET_KEY": "task-one-csrf-test-secret-with-32-bytes",
             "SECRET_KEY": oauth2.SECRET_KEY,
+            "ALGORITHM": "HS256",
+            "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
             "CORS_ALLOWED_ORIGINS": "http://localhost:1234",
             "COOKIE_SECURE": "false",
             "COOKIE_SAMESITE": "lax",
@@ -106,9 +111,24 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
 
     def _upload(self, cookies=None, data=None):
         headers = self._csrf_headers(cookies) if cookies else None
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=72, height=72)
+        font = DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })
+        page[NameObject("/Resources")] = DictionaryObject({
+            NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})
+        })
+        stream = DecodedStreamObject()
+        stream.set_data(b"BT /F1 12 Tf 10 40 Td (Private route upload test) Tj ET")
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        content = BytesIO()
+        writer.write(content)
         return self.client.post(
             "/documents/upload",
-            files={"file": ("notes.pdf", b"%PDF-test", "application/pdf")},
+            files={"file": ("notes.pdf", content.getvalue(), "application/pdf")},
             data=data,
             cookies=cookies,
             headers=headers,
@@ -272,9 +292,9 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["filename"], "notes.pdf")
         self.build_rag_mock.assert_called_once_with(7)
-        self.assertTrue(
-            (Path(self.temp_dir.name) / "documents" / "user_7" / "notes.pdf").exists()
-        )
+        stored_pdfs = list((Path(self.temp_dir.name) / "documents" / "user_7").glob("*.pdf"))
+        self.assertEqual(len(stored_pdfs), 1)
+        self.assertNotEqual(stored_pdfs[0].name, "notes.pdf")
 
     def test_no_answer_preserves_intended_503(self):
         self.ask_question_mock.return_value = (None, [])
@@ -316,8 +336,9 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         response = self._upload(cookies=cookies)
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "Processing unavailable")
-        self.assertFalse(
-            (Path(self.temp_dir.name) / "documents" / "user_7" / "notes.pdf").exists()
+        self.assertEqual(
+            list((Path(self.temp_dir.name) / "documents" / "user_7").glob("*.pdf")),
+            [],
         )
 
 

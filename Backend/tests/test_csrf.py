@@ -3,15 +3,38 @@ import secrets
 import sys
 import types
 import unittest
+from io import BytesIO
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 import jwt
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from fastapi.testclient import TestClient
 
 TEST_SECRET = "task-two-csrf-test-secret-32-bytes-minimum"
 FRONTEND_ORIGIN = "http://localhost:1234"
+
+
+def valid_pdf_bytes():
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=72, height=72)
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Helvetica"),
+    })
+    page[NameObject("/Resources")] = DictionaryObject({
+        NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})
+    })
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 10 40 Td (CSRF upload test) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    content = BytesIO()
+    writer.write(content)
+    return content.getvalue()
+
 
 rag_stub = types.ModuleType("Rag.rag")
 rag_stub.Ask_question = Mock()
@@ -77,6 +100,9 @@ class CsrfProtectionTests(unittest.TestCase):
             os.environ,
             {
                 "APP_ENV": "test",
+                "SECRET_KEY": "task-two-independent-jwt-test-secret-32-bytes",
+                "ALGORITHM": "HS256",
+                "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
                 "CSRF_SECRET_KEY": TEST_SECRET,
                 "CSRF_TOKEN_TTL_SECONDS": "3600",
                 "CORS_ALLOWED_ORIGINS": FRONTEND_ORIGIN,
@@ -255,7 +281,7 @@ class CsrfProtectionTests(unittest.TestCase):
 
         upload_response = self.client.post(
             "/documents/upload",
-            files={"file": ("notes.pdf", b"%PDF-test", "application/pdf")},
+            files={"file": ("notes.pdf", valid_pdf_bytes(), "application/pdf")},
             headers=self._origin_headers(token),
         )
         self.assertEqual(upload_response.status_code, 201)
@@ -378,7 +404,7 @@ class CsrfProtectionTests(unittest.TestCase):
             "COOKIE_SECURE": "false",
         }
         cases = [
-            ({}, "at least 32 bytes"),
+            ({}, "CSRF_SECRET_KEY must be configured"),
             ({"CSRF_SECRET_KEY": "short"}, "at least 32 bytes"),
             ({"CSRF_SECRET_KEY": "replace-with-" + "x" * 40}, "placeholder"),
             ({"CSRF_SECRET_KEY": TEST_SECRET, "SECRET_KEY": TEST_SECRET}, "different from SECRET_KEY"),

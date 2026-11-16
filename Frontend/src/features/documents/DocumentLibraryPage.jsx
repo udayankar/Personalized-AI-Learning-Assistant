@@ -125,8 +125,9 @@ export default function DocumentLibraryPage() {
       <div className={styles.header}>
         <h1 className={styles.title}>Document Library &amp; PDF Ingestion</h1>
         <p className={styles.subtitle}>
-          Upload lecture slides, chapters, or textbook PDFs. The backend parses text, extracts chunks,
-          and generates vector embeddings so the AI can cite them in responses.
+          Upload text-based lecture slides, chapters, or textbook PDFs. Their text is extracted and prepared
+          for search. Scanned PDFs are not currently processed with OCR; source references may be available
+          when the assistant answers from document evidence.
         </p>
       </div>
 
@@ -185,7 +186,7 @@ export default function DocumentLibraryPage() {
         </h2>
 
         <p className={styles.dropzoneHint}>
-          Supports PDF documents only. Text will be chunked and indexed into the RAG vector store.
+          Supports text-based PDF documents. Scanned PDFs are not OCR-processed. Extracted text is added to your local search index.
         </p>
 
         <Button
@@ -236,7 +237,7 @@ export default function DocumentLibraryPage() {
               <>
                 <div className={styles.indexingSpinner} />
                 <span>
-                  Ingesting and indexing study material into vector database. Please wait...
+                  Processing your PDF and preparing it for search. Please wait...
                 </span>
               </>
             )}
@@ -273,7 +274,7 @@ export default function DocumentLibraryPage() {
 
               <div className={styles.docBadge}>
                 <CheckCircle2 size={12} aria-hidden="true" />
-                <span>Indexed in RAG</span>
+                <span>Processed for search</span>
               </div>
             </div>
           ))}
