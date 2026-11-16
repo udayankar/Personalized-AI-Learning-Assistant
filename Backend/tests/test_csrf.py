@@ -52,11 +52,15 @@ from App.csrf import create_csrf_token
 from App.database import Base, get_db
 
 class FakeResult:
-    def __init__(self, user):
+    def __init__(self, user, rows=()):
         self.user = user
+        self.rows = rows
 
     def scalar_one_or_none(self):
         return self.user
+
+    def all(self):
+        return self.rows
 
 class FakeScalarList:
     def __init__(self, values):
@@ -94,7 +98,12 @@ class FakeDB:
 
     def execute(self, *_args):
         self.execute_count += 1
-        return FakeResult(self.user)
+        rows = [
+            (item.storage_filename, item.sha256)
+            for item in self.documents
+            if item.user_id == self.user.ID and item.status in {"PROCESSING", "READY"}
+        ]
+        return FakeResult(self.user, rows)
 
     def scalars(self, *_args):
         return FakeScalarList([

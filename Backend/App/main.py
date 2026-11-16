@@ -1,15 +1,19 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from starlette.concurrency import run_in_threadpool
 from .config import get_upload_settings
 from .csrf import configure_csrf_protection
 from .document_recovery import recover_interrupted_document_work
+from .Routers import chat, documents, auth, signup
 
-app = FastAPI()
-app.add_event_handler("startup", recover_interrupted_document_work)
-# Validate all runtime security settings before routers initialize provider clients.
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await run_in_threadpool(recover_interrupted_document_work)
+    yield
+
+app = FastAPI(lifespan=lifespan)
 configure_csrf_protection(app)
 get_upload_settings()
-
-from .Routers import chat, documents, auth, signup
 
 app.include_router(chat.router)
 app.include_router(documents.router)
