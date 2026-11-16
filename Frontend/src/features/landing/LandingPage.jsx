@@ -31,9 +31,9 @@ export default function LandingPage() {
             </h1>
 
             <p className={styles.heroSubheading}>
-              Upload text-based lecture notes, textbooks, and syllabus PDFs. Ask questions about them
-              and see when an answer uses document evidence or general AI knowledge. Scanned PDFs are
-              not currently processed with OCR.
+              Upload text-based lecture notes, textbooks, and syllabus PDFs. Answers use retrieved
+              passages from your documents, with citations when available. If the documents do not
+              contain relevant information, the assistant says so. Scanned PDFs are not OCR-processed.
             </p>
 
             <div className={styles.heroCtas}>
@@ -95,7 +95,7 @@ export default function LandingPage() {
             <span className={styles.sectionLabel}>Key Capabilities</span>
             <h2 className={styles.sectionHeading}>Engineered for Focused Academic Study</h2>
             <p className={styles.sectionSubheading}>
-              The assistant searches your uploaded documents and identifies when it uses general AI knowledge.
+              The assistant answers from retrieved document passages and identifies when the documents do not contain an answer.
             </p>
           </div>
 
@@ -196,7 +196,7 @@ export default function LandingPage() {
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
-                  <span>Questions about uploaded PDFs, with document-evidence and general-knowledge answer modes</span>
+                  <span>Document-grounded answers with source excerpts, or a clear message when no supporting information is found</span>
                 </li>
                 <li className={`${styles.capabilityItem} ${styles.capabilityItemAvailable}`}>
                   <CheckCircle2 size={16} className={`${styles.capabilityIcon} ${styles.capabilityIconAvailable}`} />
@@ -254,7 +254,7 @@ export default function LandingPage() {
         <div className={styles.ctaSectionInner}>
           <h2 className={styles.ctaSectionHeading}>Ready to Transform Your Study Experience?</h2>
           <p className={styles.ctaSectionSubtext}>
-            Ask questions about your course material and see when an answer uses general AI knowledge.
+            Ask questions about your course material and receive answers grounded in retrieved document passages.
           </p>
           <Link to="/signup" className={styles.ctaSectionButton}>
             <span>Create Your Account</span>

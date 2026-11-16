@@ -1,4 +1,5 @@
 import importlib
+import hashlib
 import os
 import sys
 import types
@@ -30,7 +31,6 @@ with patch.dict(os.environ, {"LLM_API_KEY": "unit-test-key"}):
         from App.schemas import Query_Ans
         from App.database import engine as application_engine
         from Rag import answer_cache, rag, user_storage, vector_store
-        from Rag.relevance import RetrievalChunk, RetrievalResult
 
 
 class ExactAnswerCacheTests(unittest.TestCase):
@@ -67,13 +67,16 @@ class ExactAnswerCacheTests(unittest.TestCase):
             session.commit()
 
         rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
-        self.ready_documents = {}
-        self.ready_documents_patch = patch.object(
-            rag, "get_ready_document_filenames",
-            side_effect=lambda user_id: self.ready_documents.get(user_id, set()),
+        self.ready_document_hashes = {}
+        self.ready_document_hashes_patch = patch.object(
+            rag, "get_ready_document_hashes",
+            side_effect=lambda user_id: self.ready_document_hashes.get(user_id, {}),
         )
-        self.ready_documents_patch.start()
-        self.addCleanup(self.ready_documents_patch.stop)
+        self.ready_document_hashes_patch.start()
+        self.addCleanup(self.ready_document_hashes_patch.stop)
+        self.no_documents_patch = patch.object(rag, "_user_has_documents", return_value=False)
+        self.no_documents_patch.start()
+        self.addCleanup(self.no_documents_patch.stop)
         self.assess_patch = patch.object(rag, "Assess_document_evidence", return_value={
             "coverage_status": "COMPLETE",
             "required_facts": [{"fact_id": "F1", "description": "fact", "reference_ids": ["R1"]}],
@@ -95,11 +98,6 @@ class ExactAnswerCacheTests(unittest.TestCase):
         })
         self.verify = self.verify_patch.start()
         self.addCleanup(self.verify_patch.stop)
-        self.general_patch = patch.object(rag, "Generate_general_answer", return_value={
-            "answer": "A general answer", "can_answer": True,
-        })
-        self.general = self.general_patch.start()
-        self.addCleanup(self.general_patch.stop)
 
     @staticmethod
     def chunk(source, text, user_id, page=1):
@@ -109,9 +107,14 @@ class ExactAnswerCacheTests(unittest.TestCase):
         }
 
     def save_chunks(self, user_id, chunks, vectors=None):
-        self.ready_documents.setdefault(user_id, set()).update(
-            chunk.get("document_id", chunk.get("source")) for chunk in chunks
-        )
+        grouped_text = {}
+        for chunk in chunks:
+            document_id = chunk.get("document_id", chunk.get("source"))
+            grouped_text.setdefault(document_id, []).append(chunk["text"])
+        self.ready_document_hashes[user_id] = {
+            document_id: hashlib.sha256("\0".join(texts).encode("utf-8")).hexdigest()
+            for document_id, texts in grouped_text.items()
+        }
         if vectors is None:
             vectors = np.array([[0.1, 0.0] for _ in chunks], dtype="float32")
         vector_store.Save_vector_store(vector_store.Create_vector_store(vectors), chunks, user_id)
@@ -147,29 +150,54 @@ class ExactAnswerCacheTests(unittest.TestCase):
         rag.Ask_question("Define thresholding!", 71)
         self.assertEqual(self.assess.call_count, 2)
 
-    def test_case_sensitive_query_variants_do_not_share_an_answer(self):
+    def test_case_and_whitespace_variants_share_the_cached_answer(self):
         self.save_chunks(71, [self.chunk("notes.pdf", "Relevant passage", 71)])
-        rag.Ask_question("Explain Python List", 71)
-        rag.Ask_question("Explain Python list", 71)
-        self.assertEqual(self.assess.call_count, 2)
+        retrieve = rag.Retrieve
+        with patch.object(rag, "Retrieve", wraps=retrieve) as retrieve_spy:
+            first = rag.Ask_question("Explain Python List", 71)
+            second = rag.Ask_question("  explain   python list  ", 71)
+        self.assertEqual(first.answer, second.answer)
+        self.assertEqual(self.assess.call_count, 1)
+        self.assertEqual(retrieve_spy.call_count, 1)
 
-    def test_general_answer_hit_avoids_general_gemini_call(self):
-        first = rag.Ask_question("What is a binary tree?", 71)
-        second = rag.Ask_question("What is a binary tree?", 71)
-        self.assertEqual(first.answer_mode, "GENERAL_KNOWLEDGE")
+    def test_knowledge_base_fingerprint_is_order_independent_and_content_sensitive(self):
+        pipeline = "pipeline"
+        first = answer_cache.Knowledge_base_fingerprint(
+            71, {"a.pdf": "a" * 64, "b.pdf": "b" * 64}, pipeline
+        )
+        reordered = answer_cache.Knowledge_base_fingerprint(
+            71, {"b.pdf": "b" * 64, "a.pdf": "a" * 64}, pipeline
+        )
+        changed = answer_cache.Knowledge_base_fingerprint(
+            71, {"a.pdf": "c" * 64, "b.pdf": "b" * 64}, pipeline
+        )
+        other_user = answer_cache.Knowledge_base_fingerprint(
+            72, {"a.pdf": "a" * 64, "b.pdf": "b" * 64}, pipeline
+        )
+        self.assertEqual(first, reordered)
+        self.assertNotEqual(first, changed)
+        self.assertNotEqual(first, other_user)
+
+    def test_no_information_result_is_cached_without_an_answer_generation_call(self):
+        retrieve = rag.Retrieve
+        with patch.object(rag, "Retrieve", wraps=retrieve) as retrieve_spy:
+            first = rag.Ask_question("What is a binary tree?", 71)
+            second = rag.Ask_question("What is a binary tree?", 71)
+        self.assertEqual(first.answer_mode, "INSUFFICIENT_CONFIDENCE")
+        self.assertEqual(first.fallback_reason, "NO_DOCUMENTS_UPLOADED")
         self.assertEqual(second.answer, first.answer)
-        self.assertEqual(self.general.call_count, 1)
+        self.assertFalse(hasattr(rag, "Generate_general_answer"))
+        self.assertEqual(retrieve_spy.call_count, 1)
 
-    def test_general_answer_is_replaced_by_document_answer_after_relevant_upload(self):
+    def test_no_information_cache_is_invalidated_after_relevant_upload(self):
         first = rag.Ask_question("What is image thresholding?", 71)
-        self.assertEqual(first.answer_mode, "GENERAL_KNOWLEDGE")
+        self.assertEqual(first.answer_mode, "INSUFFICIENT_CONFIDENCE")
         self.save_chunks(71, [self.chunk("vision.pdf", "Image thresholding applies a cutoff to pixel intensity.", 71)])
 
         second = rag.Ask_question("What is image thresholding?", 71)
 
         self.assertEqual(second.answer_mode, "DOCUMENT_SUPPORTED")
         self.assertEqual(second.sources[0]["source"], "vision.pdf")
-        self.assertEqual(self.general.call_count, 1)
         self.assertEqual(self.assess.call_count, 1)
 
     def test_deleted_cached_source_invalidates_document_answer(self):
@@ -180,9 +208,8 @@ class ExactAnswerCacheTests(unittest.TestCase):
         second = rag.Ask_question("What does the source say?", 71)
 
         self.assertEqual(first.answer_mode, "DOCUMENT_SUPPORTED")
-        self.assertEqual(second.answer_mode, "GENERAL_KNOWLEDGE")
+        self.assertEqual(second.answer_mode, "INSUFFICIENT_CONFIDENCE")
         self.assertEqual(second.sources, [])
-        self.assertEqual(self.general.call_count, 1)
 
     def test_changed_or_additional_retrieved_evidence_invalidates_document_answer(self):
         self.save_chunks(71, [self.chunk("a.pdf", "Original relevant fact", 71)])
@@ -207,7 +234,7 @@ class ExactAnswerCacheTests(unittest.TestCase):
 
         self.assertEqual(self.assess.call_count, 2)
 
-    def test_unrelated_upload_outside_top_five_does_not_change_context(self):
+    def test_new_document_outside_top_five_still_invalidates_old_answer(self):
         chunks = [self.chunk(f"doc-{i}.pdf", f"Relevant passage {i}", 71) for i in range(5)]
         vectors = np.array([[0.1 + i * 0.01, 0.0] for i in range(5)], dtype="float32")
         self.save_chunks(71, chunks, vectors)
@@ -219,7 +246,7 @@ class ExactAnswerCacheTests(unittest.TestCase):
         second = rag.Ask_question("Explain this fact", 71)
 
         self.assertEqual(first.answer, second.answer)
-        self.assertEqual(self.assess.call_count, 1)
+        self.assertEqual(self.assess.call_count, 2)
 
     def test_identical_question_and_context_are_still_user_scoped(self):
         self.save_chunks(71, [self.chunk("one.pdf", "User one passage", 71)])
@@ -233,12 +260,12 @@ class ExactAnswerCacheTests(unittest.TestCase):
 
     def test_cache_query_filters_by_user_even_for_an_identical_cache_key(self):
         result_one = rag.AnswerResult(
-            "User one answer", "GENERAL_KNOWLEDGE", "Not externally verified.", [], [],
-            "MODERATE", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
+            "User one answer", "INSUFFICIENT_CONFIDENCE", None, [], [],
+            "LOW", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
         )
         result_two = rag.AnswerResult(
-            "User two answer", "GENERAL_KNOWLEDGE", "Not externally verified.", [], [],
-            "MODERATE", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
+            "User two answer", "INSUFFICIENT_CONFIDENCE", None, [], [],
+            "LOW", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
         )
         query_hash, context, pipeline = "same-query-hash", "same-context", "same-pipeline"
         self.assertTrue(answer_cache.Store(71, query_hash, context, pipeline, result_one, 1))
@@ -250,19 +277,34 @@ class ExactAnswerCacheTests(unittest.TestCase):
         self.assertEqual(first["answer"], "User one answer")
         self.assertEqual(second["answer"], "User two answer")
 
-    def test_insufficient_confidence_is_not_cached(self):
-        self.general.return_value = {"answer": "", "can_answer": False}
+    def test_legitimate_no_information_result_is_cached(self):
         result = rag.Ask_question("Unanswerable question", 71)
+        self.assertEqual(result.answer_mode, "INSUFFICIENT_CONFIDENCE")
+        self.assertEqual(result.answer, rag.NO_DOCUMENTS_MESSAGE)
+        self.assertEqual(self.cache_count(), 1)
+
+    def test_transient_document_assessment_failure_is_reported_and_not_cached(self):
+        self.save_chunks(71, [self.chunk("notes.pdf", "Relevant passage", 71)])
+        self.assess.side_effect = RuntimeError("temporary provider failure")
+
+        with self.assertRaises(rag.RAGProcessingError):
+            rag.Ask_question("A question", 71)
+        self.assertEqual(self.cache_count(), 0)
+
+    def test_ready_documents_without_a_matching_index_bypass_and_do_not_store_cache(self):
+        self.ready_document_hashes[71] = {"notes.pdf": "a" * 64}
+
+        result = rag.Ask_question("What does the document say?", 71)
+
         self.assertEqual(result.answer_mode, "INSUFFICIENT_CONFIDENCE")
         self.assertEqual(self.cache_count(), 0)
 
     def test_different_pipeline_version_and_expired_entry_are_rejected(self):
-        retrieval = RetrievalResult("q", 71, (), False, 1.0)
         pipeline = answer_cache.Pipeline_fingerprint(rag.generator, 1.0)
-        context = answer_cache.Context_fingerprint(retrieval, 71, pipeline)
+        context = answer_cache.Knowledge_base_fingerprint(71, {}, pipeline)
         result = rag.AnswerResult(
-            "General", "GENERAL_KNOWLEDGE", "Not externally verified.", [], [],
-            "MODERATE", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
+            "No information", "INSUFFICIENT_CONFIDENCE", None, [], [],
+            "LOW", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
         )
         query_hash = answer_cache.Query_hash("q")
         self.assertTrue(answer_cache.Store(71, query_hash, context, pipeline, result, 1))
@@ -283,12 +325,11 @@ class ExactAnswerCacheTests(unittest.TestCase):
 
     def test_expired_cache_entries_are_removed_during_bounded_cleanup(self):
         result = rag.AnswerResult(
-            "General", "GENERAL_KNOWLEDGE", "Not externally verified.", [], [],
-            "MODERATE", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
+            "No information", "INSUFFICIENT_CONFIDENCE", None, [], [],
+            "LOW", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
         )
-        retrieval = RetrievalResult("old", 71, (), False, 1.0)
         pipeline = answer_cache.Pipeline_fingerprint(rag.generator, 1.0)
-        context = answer_cache.Context_fingerprint(retrieval, 71, pipeline)
+        context = answer_cache.Knowledge_base_fingerprint(71, {}, pipeline)
         query_hash = answer_cache.Query_hash("old")
         self.assertTrue(answer_cache.Store(71, query_hash, context, pipeline, result, 1))
         with self.Session() as session:
@@ -317,13 +358,12 @@ class ExactAnswerCacheTests(unittest.TestCase):
         self.assertEqual(self.assess.call_count, 1)
 
     def test_malformed_cached_data_is_rejected(self):
-        retrieval = RetrievalResult("q", 71, (), False, 1.0)
         pipeline = answer_cache.Pipeline_fingerprint(rag.generator, 1.0)
-        context = answer_cache.Context_fingerprint(retrieval, 71, pipeline)
+        context = answer_cache.Knowledge_base_fingerprint(71, {}, pipeline)
         with self.Session() as session:
             session.add(AnswerCache(
                 user_id=71, normalized_query_hash=answer_cache.Query_hash("q"),
-                answer="Bad data", answer_mode="GENERAL_KNOWLEDGE", message="msg",
+                answer="Bad data", answer_mode="INSUFFICIENT_CONFIDENCE", message="msg",
                 reliability="MODERATE", conflict_status="NONE", fallback_reason="reason",
                 claims="malformed", sources=[], context_fingerprint=context,
                 pipeline_version=pipeline, gemini_calls=1,
@@ -357,12 +397,11 @@ class ExactAnswerCacheTests(unittest.TestCase):
         self.assertEqual(self.assess.call_count, 2)
 
     def test_concurrent_duplicate_inserts_do_not_raise_or_duplicate_rows(self):
-        retrieval = RetrievalResult("q", 71, (), False, 1.0)
         pipeline = answer_cache.Pipeline_fingerprint(rag.generator, 1.0)
-        context = answer_cache.Context_fingerprint(retrieval, 71, pipeline)
+        context = answer_cache.Knowledge_base_fingerprint(71, {}, pipeline)
         result = rag.AnswerResult(
-            "General", "GENERAL_KNOWLEDGE", "Not externally verified.", [], [],
-            "MODERATE", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
+            "No information", "INSUFFICIENT_CONFIDENCE", None, [], [],
+            "LOW", "NONE", "NO_SUFFICIENT_DOCUMENT_EVIDENCE",
         )
         def store():
             return answer_cache.Store(71, answer_cache.Query_hash("q"), context, pipeline, result, 1)

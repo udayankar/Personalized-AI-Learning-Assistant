@@ -40,9 +40,13 @@ def Validate_evidence_assessment(raw, reference_documents) -> EvidenceAssessment
         return None
     facts = raw.get("required_facts")
     missing = raw.get("missing_facts")
-    relationships = raw.get("relationships")
-    if not isinstance(facts, list) or not isinstance(missing, list) or not isinstance(relationships, list):
+    relationships = raw.get("relationships", [])
+    if not isinstance(facts, list) or not isinstance(missing, list):
         return None
+    # Relationship metadata is helpful but optional. A malformed relationship
+    # must not discard otherwise well-formed fact coverage and citations.
+    if not isinstance(relationships, list):
+        relationships = []
 
     normalized_facts = []
     fact_ids = set()
@@ -75,7 +79,7 @@ def Validate_evidence_assessment(raw, reference_documents) -> EvidenceAssessment
     normalized_relationships = []
     for relation in relationships:
         if not isinstance(relation, dict):
-            return None
+            continue
         relation_type = relation.get("relation")
         refs = relation.get("reference_ids")
         explanation = relation.get("explanation")
@@ -84,7 +88,7 @@ def Validate_evidence_assessment(raw, reference_documents) -> EvidenceAssessment
             or relation_type not in EVIDENCE_RELATIONS
             or not isinstance(refs, list)
         ):
-            return None
+            continue
         if not isinstance(explanation, str) or not explanation.strip():
             return None
         valid_refs = list(dict.fromkeys(
@@ -92,11 +96,11 @@ def Validate_evidence_assessment(raw, reference_documents) -> EvidenceAssessment
             if isinstance(ref, str) and ref in reference_documents
         ))
         if len(valid_refs) != len(refs) or len(valid_refs) < 2:
-            return None
+            continue
         if relation_type == "CONTRADICTION" and len({
             reference_documents[ref] for ref in valid_refs
         }) < 2:
-            return None
+            continue
         normalized_relationships.append({
             "relation": relation_type,
             "reference_ids": valid_refs,
@@ -120,9 +124,11 @@ def Validate_claim_verification(
     if not isinstance(claims, list) or not claims or not isinstance(raw, dict):
         return None
     claim_results = raw.get("claim_results")
-    relationships = raw.get("relationships")
-    if not isinstance(claim_results, list) or not isinstance(relationships, list):
+    relationships = raw.get("relationships", [])
+    if not isinstance(claim_results, list):
         return None
+    if not isinstance(relationships, list):
+        relationships = []
 
     claims_by_id = {}
     for claim in claims:
@@ -180,7 +186,7 @@ def Validate_claim_verification(
     verified_relationships = []
     for relation in relationships:
         if not isinstance(relation, dict):
-            return None
+            continue
         relation_type = relation.get("relation")
         claim_ids = relation.get("claim_ids")
         refs = relation.get("citation_ids")
@@ -194,19 +200,19 @@ def Validate_claim_verification(
             or not isinstance(refs, list)
             or not isinstance(explanation, str) or not explanation.strip()
         ):
-            return None
+            continue
         allowed_refs = {
             ref for claim_id in claim_ids
             for ref in result_by_id[claim_id]["citation_ids"]
         }
         if any(not isinstance(ref, str) or ref not in allowed_refs for ref in refs):
-            return None
+            continue
         refs = list(dict.fromkeys(refs))
         if len(refs) < 2:
-            return None
+            continue
         distinct_documents = {reference_documents[ref] for ref in refs}
         if relation_type == "CONTRADICTION" and len(distinct_documents) < 2:
-            return None
+            continue
         verified_relationships.append({
             "relation": relation_type,
             "claim_ids": list(dict.fromkeys(claim_ids)),

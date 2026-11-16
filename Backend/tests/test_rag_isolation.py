@@ -1,14 +1,18 @@
 import importlib
+import hashlib
 import json
 import sys
 import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 import numpy as np
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 
 # Avoid loading model weights or contacting model providers in storage/isolation tests.
@@ -41,9 +45,6 @@ generator_stub.Verify_document_claims = Mock(side_effect=lambda _question, claim
     } for claim in claims],
     "relationships": [],
 })
-generator_stub.Generate_general_answer = Mock(return_value={
-    "answer": "General test answer", "can_answer": True,
-})
 with patch.dict(
     sys.modules,
     {
@@ -61,6 +62,9 @@ with patch.dict(
 
 class RagUserIsolationTests(unittest.TestCase):
     def setUp(self):
+        rag.Assess_document_evidence = generator_stub.Assess_document_evidence
+        rag.Generate_claims = generator_stub.Generate_claims
+        rag.Verify_document_claims = generator_stub.Verify_document_claims
         self.temp_dir = TemporaryDirectory()
         root = Path(self.temp_dir.name)
         self.documents_root_patch = patch.object(
@@ -84,17 +88,20 @@ class RagUserIsolationTests(unittest.TestCase):
         self.addCleanup(self.cache_store_patch.stop)
         self.ready_documents = {}
         self.ready_documents_patch = patch.object(
-            rag, "get_ready_document_filenames",
-            side_effect=lambda user_id: self.ready_documents.get(user_id, set()),
+            rag, "get_ready_document_hashes",
+            side_effect=lambda user_id: self.ready_documents.get(user_id, {}),
         )
         self.ready_documents_patch.start()
         self.addCleanup(self.ready_documents_patch.stop)
+        self.no_documents_patch = patch.object(rag, "_user_has_documents", return_value=False)
+        self.no_documents_patch.start()
+        self.addCleanup(self.no_documents_patch.stop)
 
     def _write_document(self, user_id, filename, contents):
         documents_dir, _ = user_storage.Get_user_paths(user_id)
         documents_dir.mkdir(parents=True, exist_ok=True)
         (documents_dir / filename).write_bytes(contents)
-        self.ready_documents.setdefault(user_id, set()).add(filename)
+        self.ready_documents.setdefault(user_id, {})[filename] = hashlib.sha256(contents).hexdigest()
 
     def _mock_process(self, path, user_id):
         user_name = path.parent.name
@@ -106,6 +113,25 @@ class RagUserIsolationTests(unittest.TestCase):
             "page": 1,
             "text": user_name,
         }], vector)
+
+    @staticmethod
+    def _write_text_pdf(path, text):
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=300, height=100)
+        font = DictionaryObject({
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        })
+        page[NameObject("/Resources")] = DictionaryObject({
+            NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})
+        })
+        stream = DecodedStreamObject()
+        stream.set_data(f"BT /F1 12 Tf 10 40 Td ({text}) Tj ET".encode("ascii"))
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        buffer = BytesIO()
+        writer.write(buffer)
+        path.write_bytes(buffer.getvalue())
 
     def test_storage_paths_require_positive_integer_database_identity(self):
         for invalid_id in (None, True, 0, -1, "../user_8", "7"):
@@ -142,10 +168,65 @@ class RagUserIsolationTests(unittest.TestCase):
         self.assertEqual(sources_a[0]["source"], "same-name.pdf")
         self.assertEqual(sources_b[0]["source"], "same-name.PDF")
 
+    def test_pdf_text_survives_extraction_chunking_indexing_and_grounded_answer(self):
+        documents_dir, _ = user_storage.Get_user_paths(101)
+        documents_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = documents_dir / "opencv-notes.pdf"
+        pdf_text = "Adaptive thresholding computes local pixel cutoffs and helps when illumination varies across an image."
+        self._write_text_pdf(pdf_path, pdf_text)
+        self.ready_documents.setdefault(101, {})[pdf_path.name] = hashlib.sha256(
+            pdf_path.read_bytes()
+        ).hexdigest()
+        rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
+        with patch.object(
+            ingest,
+            "Create_embeddings",
+            side_effect=lambda chunks: np.array([[0.1, 0.0] for _ in chunks], dtype="float32"),
+        ):
+            ingest.Build_rag(101, eligible_storage_filenames={pdf_path.name})
+
+        loaded_index, loaded_chunks = vector_store.Load_vector_store(101)
+        self.assertEqual(loaded_index.ntotal, 1)
+        self.assertIn("local pixel cutoffs", loaded_chunks[0]["text"])
+        self.assertEqual(loaded_chunks[0]["page"], 1)
+        self.assertEqual(loaded_chunks[0]["user_id"], 101)
+
+        rag.Assess_document_evidence = Mock(return_value={
+            "coverage_status": "COMPLETE",
+            "required_facts": [{
+                "fact_id": "F1", "description": "Local thresholds handle uneven illumination",
+                "reference_ids": ["R1"],
+            }],
+            "missing_facts": [],
+            "relationships": [],
+        })
+        rag.Generate_claims = Mock(return_value={"claims": [{
+            "claim_id": "C1",
+            "text": "Adaptive thresholding uses local cutoffs when illumination varies.",
+            "citation_ids": ["R1"],
+        }]})
+        rag.Verify_document_claims = Mock(return_value={
+            "claim_results": [{
+                "claim_id": "C1", "classification": "SUPPORTED",
+                "citation_ids": ["R1"], "qualified_text": None,
+            }],
+            "relationships": [],
+        })
+        result = rag.Ask_question("How does adaptive thresholding help with uneven lighting?", 101)
+
+        self.assertEqual(
+            result.answer_mode, rag.DOCUMENT_SUPPORTED,
+            f"{result.fallback_reason}: {result.message}",
+        )
+        self.assertEqual(result.sources[0]["source"], "opencv-notes.pdf")
+        self.assertEqual(result.sources[0]["page"], 1)
+        self.assertIn("local pixel cutoffs", result.sources[0]["text"])
+
     def test_empty_knowledge_base_returns_empty_sources_without_loading_other_users(self):
         result = rag.Ask_question("question", 303)
 
-        self.assertEqual(result.answer_mode, rag.GENERAL_KNOWLEDGE)
+        self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
+        self.assertEqual(result.answer, rag.NO_DOCUMENTS_MESSAGE)
         self.assertEqual(result.sources, [])
 
     def test_index_and_chunks_reload_from_the_same_users_directory(self):
@@ -365,20 +446,25 @@ class RagUserIsolationTests(unittest.TestCase):
             "document_id": "unrelated-doc",
             "user_id": 101,
         }]
-        self.ready_documents.setdefault(101, set()).add("unrelated-doc")
+        self.ready_documents.setdefault(101, {})["unrelated-doc"] = hashlib.sha256(
+            b"unrelated"
+        ).hexdigest()
         vector_store.Save_vector_store(index, chunks, 101)
         rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
+        rag.Assess_document_evidence = Mock(return_value={
+            "coverage_status": "INSUFFICIENT",
+            "required_facts": [],
+            "missing_facts": ["The passage does not answer the question"],
+            "relationships": [],
+        })
         generator = Mock(return_value={
             "claims": [{"claim_id": "C1", "text": "Should not be generated", "citation_ids": ["R1"]}],
         })
         rag.Generate_claims = generator
-        rag.Generate_general_answer = Mock(return_value={
-            "answer": "General answer", "can_answer": True,
-        })
-
         result = rag.Ask_question("unrelated question", 101)
 
-        self.assertEqual(result.answer_mode, rag.GENERAL_KNOWLEDGE)
+        self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
+        self.assertEqual(result.answer, rag.NO_INFORMATION_MESSAGE)
         self.assertEqual(result.sources, [])
         generator.assert_not_called()
 

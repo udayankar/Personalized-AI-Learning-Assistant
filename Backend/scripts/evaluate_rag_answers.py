@@ -21,9 +21,10 @@ def _evaluate_case(case):
     }
     assessment = Validate_evidence_assessment(case["assessment"], reference_documents)
     sufficient = bool(assessment and assessment.sufficient)
+    covered_facts = bool(assessment and any(fact["reference_ids"] for fact in assessment.required_facts))
     claims = case.get("claims", [])
     verified = None
-    if sufficient and claims:
+    if (sufficient or covered_facts) and claims:
         verified = Validate_claim_verification(
             claims,
             case.get("verification"),
@@ -32,7 +33,7 @@ def _evaluate_case(case):
         )
 
     if not sufficient or not claims or verified is None or verified.reliability == "LOW":
-        mode = "GENERAL_KNOWLEDGE" if case.get("general_answer_available", True) else "INSUFFICIENT_CONFIDENCE"
+        mode = "INSUFFICIENT_CONFIDENCE"
     else:
         mode = "DOCUMENT_SUPPORTED"
 
@@ -128,7 +129,7 @@ def evaluate_live_sample():
             documents = {item["reference"]: item["source"] for item in passages}
             assessment_raw = generator.Assess_document_evidence(example["question"], passages)
             assessment = Validate_evidence_assessment(assessment_raw, documents)
-            mode = "GENERAL_KNOWLEDGE"
+            mode = "INSUFFICIENT_CONFIDENCE"
             reliability = "MODERATE"
             conflict = False
             conflict_match = None
@@ -163,10 +164,9 @@ def evaluate_live_sample():
                             for claim in verified.claims for ref in claim["citation_ids"]
                         )
             if mode != "DOCUMENT_SUPPORTED":
-                general = generator.Generate_general_answer(example["question"])
-                if not isinstance(general, dict) or general.get("can_answer") is not True:
-                    mode = "INSUFFICIENT_CONFIDENCE"
-                    reliability = "LOW"
+                # Do not ask Gemini to answer without document evidence.
+                mode = "INSUFFICIENT_CONFIDENCE"
+                reliability = "LOW"
             outcomes.append({
                 "case": example["id"],
                 "status": "COMPLETED",
@@ -205,7 +205,7 @@ def _metrics(cases, results):
     answer_total = answer_correct = answer_relevant = 0
     conflict_tp = conflict_fp = conflict_fn = 0
     suff_tp = suff_fp = suff_fn = 0
-    fallback_correct = fallback_total = 0
+    answer_mode_correct = answer_mode_total = 0
 
     for case, result in zip(cases, results):
         gold = case["gold"]
@@ -225,8 +225,8 @@ def _metrics(cases, results):
         elif gold["conflict"]:
             conflict_fn += 1
 
-        fallback_total += 1
-        fallback_correct += int(result["mode"] == gold["answer_mode"])
+        answer_mode_total += 1
+        answer_mode_correct += int(result["mode"] == gold["answer_mode"])
 
         verified = result["verified"]
         predicted_claims = {claim["claim_id"]: claim for claim in verified.claims} if verified else {}
@@ -277,7 +277,7 @@ def _metrics(cases, results):
         "claim_classification_accuracy": {"value": _ratio(claim_class_correct, claim_class_total), "correct_classifications": claim_class_correct, "labeled_claims": claim_class_total},
         "contradiction_detection": {"precision": _ratio(conflict_tp, conflict_tp + conflict_fp), "recall": _ratio(conflict_tp, conflict_tp + conflict_fn), "true_positive": conflict_tp, "false_positive": conflict_fp, "false_negative": conflict_fn},
         "evidence_sufficiency": {"precision": _ratio(suff_tp, suff_tp + suff_fp), "recall": _ratio(suff_tp, suff_tp + suff_fn), "true_positive": suff_tp, "false_positive": suff_fp, "false_negative": suff_fn},
-        "fallback_classification_accuracy": {"value": _ratio(fallback_correct, fallback_total), "correct_modes": fallback_correct, "cases": fallback_total},
+        "document_only_answer_mode_accuracy": {"value": _ratio(answer_mode_correct, answer_mode_total), "correct_modes": answer_mode_correct, "cases": answer_mode_total},
         "returned_claim_correctness": {"value": _ratio(answer_correct, answer_total), "correct_returned_claims": answer_correct, "returned_claims": answer_total},
         "returned_claim_relevance": {"value": _ratio(answer_relevant, answer_total), "relevant_returned_claims": answer_relevant, "returned_claims": answer_total},
     }

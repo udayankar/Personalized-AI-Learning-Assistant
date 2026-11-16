@@ -18,7 +18,7 @@ class AnswerClaim(BaseModel):
 
 class Query_Ans(BaseModel) :
     answer : str
-    answer_mode: Literal["DOCUMENT_SUPPORTED", "GENERAL_KNOWLEDGE", "INSUFFICIENT_CONFIDENCE"]
+    answer_mode: Literal["DOCUMENT_SUPPORTED", "INSUFFICIENT_CONFIDENCE"]
     message: str | None = None
     reliability: Literal["HIGH", "MODERATE", "LOW"]
     conflict_status: Literal["NONE", "CONTRADICTION", "UNCERTAIN"]

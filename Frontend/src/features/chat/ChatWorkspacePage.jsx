@@ -95,8 +95,9 @@ export default function ChatWorkspacePage() {
               </div>
               <h2 className={styles.emptyTitle}>AI Learning Workspace</h2>
               <p className={styles.emptyDesc}>
-                Ask a question about your course materials. Answers identify when they come from your
-                documents or from general model knowledge, with retrieved passages cited where available.
+                Ask a question about your course materials. Answers are based on retrieved passages and
+                include source citations when available. If the documents do not contain the answer, the
+                assistant will say so.
               </p>
 
               <div className={styles.exampleQueries}>
@@ -162,8 +163,7 @@ export default function ChatWorkspacePage() {
                           {message.answerMode && (
                             <div className={styles.answerMode} data-testid="answer-mode">
                               {message.answerMode === 'DOCUMENT_SUPPORTED' && 'From your documents'}
-                              {message.answerMode === 'GENERAL_KNOWLEDGE' && 'General model knowledge'}
-                              {message.answerMode === 'INSUFFICIENT_CONFIDENCE' && 'Unable to answer confidently'}
+                              {message.answerMode === 'INSUFFICIENT_CONFIDENCE' && 'Not found in your documents'}
                             </div>
                           )}
                           {message.reliability && message.answerMode !== 'INSUFFICIENT_CONFIDENCE' && (

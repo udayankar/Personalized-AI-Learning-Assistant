@@ -1,27 +1,15 @@
 from fastapi import APIRouter , Response , HTTPException , status, Depends
-from types import SimpleNamespace
+from starlette.concurrency import run_in_threadpool
 from ..schemas import Query_Chat , Query_Ans
 from ..oauth2 import get_current_user
-from Rag.rag import Ask_question
+from Rag.rag import Ask_question, RAGProcessingError
 
 router = APIRouter(prefix="/chat" , tags=["Chat"])
 
 @router.post("/query" , response_model=Query_Ans)
 async def Give_Query(payload : Query_Chat, current_user = Depends(get_current_user)) :
     try:
-        result = Ask_question(payload.query, current_user.ID)
-        if isinstance(result, tuple):
-            answer, sources = result
-            result = SimpleNamespace(
-                answer=answer,
-                answer_mode="DOCUMENT_SUPPORTED" if sources else "INSUFFICIENT_CONFIDENCE",
-                message=None,
-                reliability="MODERATE" if sources else "LOW",
-                conflict_status="NONE",
-                fallback_reason=None,
-                claims=[],
-                sources=sources,
-            )
+        result = await run_in_threadpool(Ask_question, payload.query, current_user.ID)
         if result.answer:
             return {
                 "answer": result.answer,
@@ -37,6 +25,11 @@ async def Give_Query(payload : Query_Chat, current_user = Depends(get_current_us
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE , detail="Failed to generate answer")
     except HTTPException:
         raise
+    except RAGProcessingError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document-based answering is temporarily unavailable. Please try again.",
+        )
     except Exception :
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR , detail="An error occurred while processing the query")
 

@@ -30,8 +30,8 @@ function DashboardPage() {
         <h2 className={styles.welcomeTitle}>Welcome back, {firstName}.</h2>
         <p className={styles.welcomeSubtitle}>
           Your AI-powered learning assistant is ready. Upload study materials and ask questions.
-          The assistant searches your documents first and may use clearly labeled general AI knowledge
-          when document evidence is insufficient.
+          Answers use retrieved passages from your documents. If the documents do not contain relevant
+          information, the assistant will say so instead of filling gaps from general knowledge.
         </p>
       </div>
 
@@ -127,8 +127,8 @@ function DashboardPage() {
             <p className={styles.infoCardTitle}>RAG-Powered AI</p>
           </div>
           <p className={styles.infoCardText}>
-            The assistant searches your documents first. If their evidence is insufficient, it may provide a
-            clearly labeled explanation from general AI knowledge.
+            Gemini helps assess and explain retrieved passages, but factual answer claims must be supported
+            by those passages. If no relevant support is found, the assistant reports that limitation.
           </p>
         </div>
       </div>

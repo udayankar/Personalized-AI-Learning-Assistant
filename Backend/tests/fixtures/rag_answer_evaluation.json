@@ -15,7 +15,7 @@
     "unsupported_claim_rate": "Returned claims without a labeled supporting citation / all returned claims.",
     "contradiction_detection": "Case-level precision and recall against gold conflict labels.",
     "evidence_sufficiency": "Case-level precision and recall against gold evidence_sufficient labels.",
-    "fallback_classification_accuracy": "Predicted response mode matches the gold response mode.",
+    "document_only_answer_mode_accuracy": "Predicted response mode matches the gold response mode.",
     "returned_claim_correctness_relevance": "Fraction of returned claims manually labeled correct/relevant; correctness also requires at least one labeled supporting citation. This is claim-level, not whole-answer semantic scoring."
   },
   "calibration_cases": [
@@ -67,7 +67,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -161,7 +160,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -265,7 +263,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -332,23 +329,22 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
     },
     {
-      "id": "partially_covered_fallback_a",
+      "id": "partially_covered_document_answer_a",
       "split": "calibration",
-      "scenario": "partially_covered_fallback",
+      "scenario": "partially_covered_document_answer",
       "question": "Compare the online and in-person attendance rules.",
       "passages": [
         {
           "reference": "R1",
-          "document_id": "partially_covered_fallback_a-d1",
+          "document_id": "partially_covered_document_answer_a-d1",
           "text": "Online students must attend at least 80 percent of live sessions."
         }
       ],
@@ -378,10 +374,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -483,7 +478,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -609,7 +603,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -735,7 +728,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -825,7 +817,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -905,10 +896,9 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": [
           {
@@ -972,7 +962,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1039,7 +1028,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1059,14 +1047,14 @@
       }
     },
     {
-      "id": "general_knowledge_fallback_a",
+      "id": "no_document_information_a",
       "split": "calibration",
-      "scenario": "general_knowledge_fallback",
+      "scenario": "no_document_information",
       "question": "Explain what photosynthesis is.",
       "passages": [
         {
           "reference": "R1",
-          "document_id": "general_knowledge_fallback_a-d1",
+          "document_id": "no_document_information_a-d1",
           "text": "The uploaded note discusses laboratory attendance only."
         }
       ],
@@ -1089,10 +1077,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -1185,7 +1172,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1233,10 +1219,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -1260,7 +1245,6 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": false,
       "gold": {
         "evidence_sufficient": false,
         "answer_mode": "INSUFFICIENT_CONFIDENCE",
@@ -1299,10 +1283,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -1357,7 +1340,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1451,7 +1433,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1555,7 +1536,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1622,23 +1602,22 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
     },
     {
-      "id": "partially_covered_fallback_b",
+      "id": "partially_covered_document_answer_b",
       "split": "validation",
-      "scenario": "partially_covered_fallback",
+      "scenario": "partially_covered_document_answer",
       "question": "Compare the morning and evening lab safety requirements.",
       "passages": [
         {
           "reference": "R1",
-          "document_id": "partially_covered_fallback_b-d1",
+          "document_id": "partially_covered_document_answer_b-d1",
           "text": "Morning lab students must wear closed-toe shoes."
         }
       ],
@@ -1668,10 +1647,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -1773,7 +1751,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -1899,7 +1876,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -2025,7 +2001,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -2115,7 +2090,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -2195,10 +2169,9 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": [
           {
@@ -2262,7 +2235,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -2329,7 +2301,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -2349,14 +2320,14 @@
       }
     },
     {
-      "id": "general_knowledge_fallback_b",
+      "id": "no_document_information_b",
       "split": "validation",
-      "scenario": "general_knowledge_fallback",
+      "scenario": "no_document_information",
       "question": "What is a binary search tree?",
       "passages": [
         {
           "reference": "R1",
-          "document_id": "general_knowledge_fallback_b-d1",
+          "document_id": "no_document_information_b-d1",
           "text": "The uploaded note lists the course submission dates only."
         }
       ],
@@ -2379,10 +2350,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -2475,7 +2445,6 @@
           }
         ]
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",
@@ -2523,10 +2492,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": false,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -2550,7 +2518,6 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": false,
       "gold": {
         "evidence_sufficient": false,
         "answer_mode": "INSUFFICIENT_CONFIDENCE",
@@ -2589,10 +2556,9 @@
         "claim_results": [],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
-        "answer_mode": "GENERAL_KNOWLEDGE",
+        "answer_mode": "INSUFFICIENT_CONFIDENCE",
         "conflict": false,
         "claims": []
       }
@@ -2650,7 +2616,6 @@
         ],
         "relationships": []
       },
-      "general_answer_available": true,
       "gold": {
         "evidence_sufficient": true,
         "answer_mode": "DOCUMENT_SUPPORTED",

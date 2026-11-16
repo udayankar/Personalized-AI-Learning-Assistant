@@ -19,7 +19,7 @@ function renderChat(answerMode, message, sources = []) {
     answer: 'The assistant response.',
     answer_mode: answerMode,
     message,
-    reliability: answerMode === 'DOCUMENT_SUPPORTED' ? 'HIGH' : (answerMode === 'GENERAL_KNOWLEDGE' ? 'MODERATE' : 'LOW'),
+    reliability: answerMode === 'DOCUMENT_SUPPORTED' ? 'HIGH' : 'LOW',
     conflict_status: 'NONE',
     fallback_reason: null,
     claims: sources.length ? [{
@@ -54,22 +54,22 @@ describe('Chat answer mode and citations', () => {
     expect(screen.getByText('Retrieved supporting excerpt.')).toBeInTheDocument();
   });
 
-  test('shows general knowledge disclosure without document citations', () => {
+  test('shows the no-information response without document citations', () => {
     renderChat(
-      'GENERAL_KNOWLEDGE',
-      'The uploaded documents do not sufficiently cover this question. The explanation is based on general model knowledge.',
+      'INSUFFICIENT_CONFIDENCE',
+      'No relevant information was found in your uploaded documents to answer this question.',
     );
 
-    expect(screen.getByText('General model knowledge')).toBeInTheDocument();
-    expect(screen.getByRole('note')).toHaveTextContent('not sufficiently cover');
-    expect(screen.getByText('Reliability category: moderate')).toBeInTheDocument();
+    expect(screen.getByText('Not found in your documents')).toBeInTheDocument();
+    expect(screen.getByText(/No relevant information was found in your uploaded documents/)).toBeInTheDocument();
+    expect(screen.queryByText(/general model knowledge/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Source citations')).not.toBeInTheDocument();
   });
 
-  test('shows insufficient-confidence mode', () => {
+  test('shows the document-limited mode', () => {
     renderChat('INSUFFICIENT_CONFIDENCE', 'More source material is needed.');
 
-    expect(screen.getByText('Unable to answer confidently')).toBeInTheDocument();
+    expect(screen.getByText('Not found in your documents')).toBeInTheDocument();
     expect(screen.getByRole('note')).toHaveTextContent('More source material is needed');
   });
 });

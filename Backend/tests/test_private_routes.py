@@ -1,4 +1,6 @@
+import asyncio
 import sys
+import threading
 import types
 import unittest
 import os
@@ -20,6 +22,9 @@ from starlette.requests import Request
 
 rag_stub = types.ModuleType("Rag.rag")
 rag_stub.Ask_question = Mock()
+class StubRAGProcessingError(RuntimeError):
+    pass
+rag_stub.RAGProcessingError = StubRAGProcessingError
 ingest_stub = types.ModuleType("Rag.ingest")
 ingest_stub.Build_rag = Mock()
 with patch.dict(sys.modules, {"Rag.rag": rag_stub, "Rag.ingest": ingest_stub}):
@@ -119,7 +124,17 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.addCleanup(self.documents_root_patch.stop)
         self.addCleanup(self.storage_root_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
-        self.ask_question = patch.object(chat, "Ask_question", return_value=("Answer", []))
+        no_information = "You haven't uploaded any documents yet. Upload a document to start asking questions."
+        self.ask_question = patch.object(chat, "Ask_question", return_value=SimpleNamespace(
+            answer=no_information,
+            answer_mode="INSUFFICIENT_CONFIDENCE",
+            message=None,
+            reliability="LOW",
+            conflict_status="NONE",
+            fallback_reason="NO_DOCUMENTS_UPLOADED",
+            claims=[],
+            sources=[],
+        ))
         self.build_rag = patch.object(documents, "Build_rag")
         self.ask_question_mock = self.ask_question.start()
         self.build_rag_mock = self.build_rag.start()
@@ -262,12 +277,12 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {
-            "answer": "Answer",
+            "answer": "You haven't uploaded any documents yet. Upload a document to start asking questions.",
             "answer_mode": "INSUFFICIENT_CONFIDENCE",
             "message": None,
             "reliability": "LOW",
             "conflict_status": "NONE",
-            "fallback_reason": None,
+            "fallback_reason": "NO_DOCUMENTS_UPLOADED",
             "claims": [],
             "sources": [],
         })
@@ -310,6 +325,40 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.assertEqual(response.json()["sources"][0]["page"], 3)
         self.assertEqual(response.json()["claims"][0]["sources"][0]["source"], "notes.pdf")
 
+    def test_chat_runs_synchronous_rag_work_off_the_async_event_loop(self):
+        caller_thread = threading.get_ident()
+        rag_thread_ids = []
+
+        def capture_rag_thread(*_args):
+            rag_thread_ids.append(threading.get_ident())
+            return self.ask_question_mock.return_value
+
+        async def invoke_chat():
+            with patch.object(chat, "Ask_question", side_effect=capture_rag_thread):
+                return await chat.Give_Query(
+                    SimpleNamespace(query="Explain this"), self.user
+                )
+
+        result = asyncio.run(invoke_chat())
+        self.assertEqual(result["answer_mode"], "INSUFFICIENT_CONFIDENCE")
+        self.assertEqual(len(rag_thread_ids), 1)
+        self.assertNotEqual(rag_thread_ids[0], caller_thread)
+
+    def test_chat_reports_document_model_failure_as_temporary_service_error(self):
+        cookies, _ = self._auth_cookies()
+        self.ask_question_mock.side_effect = chat.RAGProcessingError("provider failure")
+
+        response = self.client.post(
+            "/chat/query", json={"query": "Explain this"},
+            cookies=cookies, headers=self._csrf_headers(cookies),
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            "Document-based answering is temporarily unavailable. Please try again.",
+        )
+
     def test_valid_authenticated_upload_reaches_existing_logic(self):
         cookies, _ = self._auth_cookies()
         response = self._upload(cookies=cookies, data={"user_id": "8"})
@@ -326,7 +375,7 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         )
 
     def test_no_answer_preserves_intended_503(self):
-        self.ask_question_mock.return_value = (None, [])
+        self.ask_question_mock.return_value = SimpleNamespace(answer="")
         cookies, _ = self._auth_cookies()
         response = self.client.post(
             "/chat/query", json={"query": "Explain this"},

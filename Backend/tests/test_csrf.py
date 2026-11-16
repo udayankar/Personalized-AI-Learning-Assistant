@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 import jwt
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 TEST_SECRET = "task-two-csrf-test-secret-32-bytes-minimum"
@@ -39,6 +40,7 @@ def valid_pdf_bytes():
 
 rag_stub = types.ModuleType("Rag.rag")
 rag_stub.Ask_question = Mock()
+rag_stub.RAGProcessingError = type("RAGProcessingError", (RuntimeError,), {})
 ingest_stub = types.ModuleType("Rag.ingest")
 ingest_stub.Build_rag = Mock()
 sys.modules["Rag.rag"] = rag_stub
@@ -169,7 +171,16 @@ class CsrfProtectionTests(unittest.TestCase):
         self.user_paths_patch.start()
         self.addCleanup(self.user_paths_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
-        self.ask_question_patch = patch.object(chat, "Ask_question", return_value=("Answer", []))
+        self.ask_question_patch = patch.object(chat, "Ask_question", return_value=types.SimpleNamespace(
+            answer="You haven't uploaded any documents yet. Upload a document to start asking questions.",
+            answer_mode="INSUFFICIENT_CONFIDENCE",
+            message=None,
+            reliability="LOW",
+            conflict_status="NONE",
+            fallback_reason="NO_DOCUMENTS_UPLOADED",
+            claims=[],
+            sources=[],
+        ))
         self.build_rag_patch = patch.object(documents, "Build_rag")
         self.password_patch = patch.object(auth, "verify_password", return_value=True)
         self.hash_patch = patch.object(signup, "hashed_password", return_value="hashed-password")
@@ -530,23 +541,33 @@ class CsrfProtectionTests(unittest.TestCase):
         self.ask_question.assert_not_called()
 
     def test_authenticated_unsafe_route_without_csrf_configuration_fails_closed(self):
-        from fastapi import FastAPI
-        app = FastAPI()
-        app.include_router(chat.router)
-        app.dependency_overrides[get_db] = lambda: self.db
-        client = TestClient(app, raise_server_exceptions=False)
+        from starlette.requests import Request
+
+        configured_settings = self.app.state.csrf_settings
+        delattr(self.app.state, "csrf_settings")
         valid_jwt = oauth2.create_access_token(str(self.user.ID))
-        with patch.dict(os.environ, {"APP_ENV": "test", "SECRET_KEY": oauth2.SECRET_KEY,
-                                    "CSRF_SECRET_KEY": "", "CORS_ALLOWED_ORIGINS": FRONTEND_ORIGIN}, clear=True):
-            response = client.post(
-                "/chat/query", json={"query": "Explain this"},
-                cookies={"access_token": valid_jwt}, headers=self._origin_headers("x"),
-            )
-            anonymous = client.post("/chat/query", json={"query": "Explain this"})
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json()["detail"], "CSRF protection is unavailable")
-        self.assertEqual(anonymous.status_code, 401)
-        self.ask_question.assert_not_called()
+        try:
+            with patch.dict(os.environ, {"APP_ENV": "test", "SECRET_KEY": oauth2.SECRET_KEY,
+                                        "CSRF_SECRET_KEY": "", "CORS_ALLOWED_ORIGINS": FRONTEND_ORIGIN}):
+                request = Request({
+                    "type": "http", "http_version": "1.1", "method": "POST",
+                    "scheme": "http", "path": "/chat/query", "raw_path": b"/chat/query",
+                    "query_string": b"", "headers": [
+                        (b"origin", FRONTEND_ORIGIN.encode()),
+                        (b"x-csrf-token", b"x"),
+                    ], "server": ("testserver", 80), "client": ("testclient", 50000),
+                    "root_path": "", "app": self.app,
+                })
+                with self.assertRaises(HTTPException) as authenticated_error:
+                    oauth2.get_current_user(request, valid_jwt, self.db)
+                with self.assertRaises(HTTPException) as anonymous_error:
+                    oauth2.get_current_user(request, None, self.db)
+            self.assertEqual(authenticated_error.exception.status_code, 503)
+            self.assertEqual(authenticated_error.exception.detail, "CSRF protection is unavailable")
+            self.assertEqual(anonymous_error.exception.status_code, 401)
+            self.ask_question.assert_not_called()
+        finally:
+            self.app.state.csrf_settings = configured_settings
 
     def test_production_csrf_cookie_is_secure(self):
         from fastapi import Response

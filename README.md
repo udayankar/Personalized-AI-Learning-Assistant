@@ -53,17 +53,16 @@ When an answer is supported by your uploaded documents, the application can prov
 
 This makes it easier to verify information instead of blindly trusting an AI-generated response.
 
-### 💡 Understand different answer types
+### 💡 Answers grounded in your documents
 
-The assistant distinguishes between three situations:
+The assistant only returns factual answers that it can verify against retrieved passages from your own uploaded documents. It does not answer from general model knowledge when document evidence is missing.
 
 | Answer type | What it means |
 |---|---|
-| **Document Supported** | The answer is based on relevant information retrieved from your uploaded documents. |
-| **General Knowledge** | Your documents do not provide sufficient information, so the assistant uses general AI knowledge. |
-| **Insufficient Confidence** | The available evidence is not strong enough to provide a sufficiently supported answer. |
+| **Document Supported** | Claims are generated from retrieved passages and include source excerpts and citations when available. |
+| **Not found in your documents** | The documents do not contain relevant support, or the system could not verify a document-grounded answer. |
 
-This distinction helps make it clearer when an answer comes from your study material and when it does not.
+When evidence covers only part of a question, the assistant can return the supported portion and describe what it could not find. Technical processing failures are returned as errors rather than being presented as missing information.
 
 ### 🔐 Keep your learning materials private
 
@@ -192,7 +191,7 @@ The current implementation focuses on:
 - Text extraction, chunking, and embedding generation.
 - Document retrieval using FAISS.
 - AI-powered question answering.
-- Document-supported and general-knowledge answer handling.
+- Document-grounded answers and clear no-information responses.
 - Source references and evidence validation.
 - Account-specific document storage and retrieval.
 - Exact-answer caching.

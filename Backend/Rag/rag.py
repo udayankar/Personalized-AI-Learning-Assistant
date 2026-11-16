@@ -2,7 +2,7 @@ import hashlib
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from sqlalchemy import select
 from App.database import SessionLocal
 from App.models import Document
@@ -11,75 +11,42 @@ from . import answer_cache, generator
 from .answering import Validate_claim_verification, Validate_evidence_assessment
 from .vector_store import Load_vector_store, Retrieve
 from .embedder import model
+from .relevance import Get_calibrated_relevance_threshold
 from .generator import (
     Assess_document_evidence,
     Generate_claims,
-    Generate_general_answer,
     Verify_document_claims,
 )
 
 
 DOCUMENT_SUPPORTED = "DOCUMENT_SUPPORTED"
-GENERAL_KNOWLEDGE = "GENERAL_KNOWLEDGE"
 INSUFFICIENT_CONFIDENCE = "INSUFFICIENT_CONFIDENCE"
 
+NO_DOCUMENTS_UPLOADED = "NO_DOCUMENTS_UPLOADED"
 NO_SUFFICIENT_DOCUMENT_EVIDENCE = "NO_SUFFICIENT_DOCUMENT_EVIDENCE"
 DOCUMENT_GENERATION_DECLINED = "DOCUMENT_GENERATION_DECLINED"
 CITATION_VERIFICATION_FAILED = "CITATION_VERIFICATION_FAILED"
-DOCUMENT_GENERATION_FAILED = "DOCUMENT_GENERATION_FAILED"
 DOCUMENT_ANSWER_UNRELIABLE = "DOCUMENT_ANSWER_UNRELIABLE"
-GENERAL_KNOWLEDGE_UNRELIABLE = "GENERAL_KNOWLEDGE_UNRELIABLE"
-EVIDENCE_ASSESSMENT_FAILED = "EVIDENCE_ASSESSMENT_FAILED"
 logger = logging.getLogger(__name__)
 
 
-def get_ready_document_filenames(user_id: int) -> set[str]:
+class RAGProcessingError(RuntimeError):
+    """A document-answering operation failed for technical reasons."""
+
+
+def get_ready_document_hashes(user_id: int) -> dict[str, str]:
     with SessionLocal() as session:
-        return set(session.scalars(
-            select(Document.storage_filename).where(
+        rows = session.execute(
+            select(Document.storage_filename, Document.sha256).where(
                 Document.user_id == user_id,
                 Document.status == "READY",
             )
-        ).all())
+        ).all()
+    return {filename: digest for filename, digest in rows}
 
 
-FALLBACK_MESSAGES = {
-    NO_SUFFICIENT_DOCUMENT_EVIDENCE: (
-        "The uploaded documents do not sufficiently cover this question. "
-        "The following explanation is based on general model knowledge and has not been externally verified."
-    ),
-    DOCUMENT_GENERATION_DECLINED: (
-        "The retrieved passages did not support a document-based answer. "
-        "The following explanation is based on general model knowledge and has not been externally verified."
-    ),
-    CITATION_VERIFICATION_FAILED: (
-        "I could not verify the generated claims against their cited passages. "
-        "The following explanation is based on general model knowledge and has not been externally verified."
-    ),
-    DOCUMENT_GENERATION_FAILED: (
-        "I could not generate a reliable document-based answer. "
-        "The following explanation is based on general model knowledge and has not been externally verified."
-    ),
-    DOCUMENT_ANSWER_UNRELIABLE: (
-        "The retrieved passages did not support a reliable document-based answer. "
-        "The following explanation is based on general model knowledge and has not been externally verified."
-    ),
-    EVIDENCE_ASSESSMENT_FAILED: (
-        "I could not assess document coverage reliably. "
-        "The following explanation is based on general model knowledge and has not been externally verified."
-    ),
-}
-
-INSUFFICIENT_MESSAGES = {
-    GENERAL_KNOWLEDGE_UNRELIABLE: (
-        "The documents do not provide sufficient evidence, and a reliable general answer could not be produced. "
-        "Try narrowing the question or uploading relevant material."
-    ),
-    CITATION_VERIFICATION_FAILED: (
-        "The document-based claims could not be verified, and a reliable general answer could not be produced. "
-        "Try narrowing the question or uploading relevant material."
-    ),
-}
+NO_DOCUMENTS_MESSAGE = "You haven't uploaded any documents yet. Upload a document to start asking questions."
+NO_INFORMATION_MESSAGE = "No relevant information was found in your uploaded documents to answer this question."
 
 
 @dataclass(frozen=True)
@@ -94,48 +61,19 @@ class AnswerResult:
     fallback_reason: str | None
 
     def __iter__(self):
-        """Keep tuple unpacking available to internal callers during the response transition."""
         yield self.answer
         yield self.sources
 
 
-def _insufficient_result(reason):
+def _no_information_result(reason):
+    message = NO_DOCUMENTS_MESSAGE if reason == NO_DOCUMENTS_UPLOADED else NO_INFORMATION_MESSAGE
     return AnswerResult(
-        answer="I can't provide a reliable answer from the available information.",
+        answer=message,
         answer_mode=INSUFFICIENT_CONFIDENCE,
-        message=INSUFFICIENT_MESSAGES.get(
-            reason,
-            "The available information is insufficient for a reliable answer. Try narrowing the question or uploading relevant material.",
-        ),
+        message=None,
         sources=[],
         claims=[],
         reliability="LOW",
-        conflict_status="UNCERTAIN",
-        fallback_reason=reason,
-    )
-
-
-def _general_knowledge_result(question, reason, gemini_call_count=None):
-    try:
-        if gemini_call_count is not None:
-            gemini_call_count[0] += 1
-        generated = Generate_general_answer(question)
-    except Exception:
-        return _insufficient_result(GENERAL_KNOWLEDGE_UNRELIABLE)
-    if (
-        not isinstance(generated, dict)
-        or generated.get("can_answer") is not True
-        or not isinstance(generated.get("answer"), str)
-        or not generated["answer"].strip()
-    ):
-        return _insufficient_result(GENERAL_KNOWLEDGE_UNRELIABLE)
-    return AnswerResult(
-        answer=generated["answer"].strip(),
-        answer_mode=GENERAL_KNOWLEDGE,
-        message=FALLBACK_MESSAGES[reason],
-        sources=[],
-        claims=[],
-        reliability="MODERATE",
         conflict_status="NONE",
         fallback_reason=reason,
     )
@@ -145,11 +83,11 @@ def _passage_bundle(retrieval):
     passages = []
     reference_map = {}
     reference_documents = {}
-    for position, chunk in enumerate(retrieval.relevant_chunks, start=1):
+    for position, chunk in enumerate(retrieval.chunks, start=1):
         model_reference = f"R{position}"
-        stable_reference = "passage-" + hashlib.sha256(
-            f"{retrieval.user_id}\0{chunk.document_id}\0{chunk.page}\0{chunk.text}".encode("utf-8")
-        ).hexdigest()[:16]
+        stable_reference = _stable_passage_reference(
+            retrieval.user_id, chunk.document_id, chunk.page, chunk.text
+        )
         passage = {
             "reference": model_reference,
             "source": chunk.source,
@@ -165,6 +103,37 @@ def _passage_bundle(retrieval):
         }
         reference_documents[model_reference] = chunk.document_id
     return passages, reference_map, reference_documents
+
+
+def _stable_passage_reference(user_id, document_id, page, text):
+    return "passage-" + hashlib.sha256(
+        f"{user_id}\0{document_id}\0{page}\0{text}".encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _current_source_map(chunks, user_id, ready_document_ids):
+    current = {}
+    for chunk in chunks:
+        document_id = chunk.get("document_id", chunk.get("source"))
+        if (
+            not isinstance(document_id, str)
+            or document_id not in ready_document_ids
+            or chunk.get("user_id", user_id) != user_id
+            or not isinstance(chunk.get("text"), str)
+        ):
+            continue
+        page = chunk.get("page")
+        if page is not None and (isinstance(page, bool) or not isinstance(page, int)):
+            page = None
+        source = str(chunk.get("source", "Unknown"))
+        reference = _stable_passage_reference(user_id, document_id, page, chunk["text"])
+        current[reference] = {
+            "reference": reference,
+            "source": source,
+            "page": page,
+            "text": chunk["text"],
+        }
+    return current
 
 
 def _valid_generated_claims(raw, reference_documents):
@@ -203,12 +172,22 @@ def _document_answer(question, retrieval, gemini_call_count=None):
         if gemini_call_count is not None:
             gemini_call_count[0] += 1
         raw_assessment = Assess_document_evidence(question, passages)
-    except Exception:
-        return None, EVIDENCE_ASSESSMENT_FAILED
+    except Exception as error:
+        logger.warning(
+            "rag_processing_failure stage=evidence_assessment error_type=%s",
+            type(error).__name__,
+        )
+        raise RAGProcessingError("Document evidence assessment failed") from error
     assessment = Validate_evidence_assessment(raw_assessment, reference_documents)
     if assessment is None:
-        return None, EVIDENCE_ASSESSMENT_FAILED
-    if not assessment.sufficient:
+        logger.warning(
+            "rag_processing_failure stage=evidence_assessment error_type=InvalidResponse"
+        )
+        raise RAGProcessingError("Document evidence assessment returned an invalid response")
+    covered_facts = [
+        fact for fact in assessment.required_facts if fact["reference_ids"]
+    ]
+    if not assessment.sufficient and not covered_facts:
         return None, NO_SUFFICIENT_DOCUMENT_EVIDENCE
 
     assessment_payload = {
@@ -221,8 +200,12 @@ def _document_answer(question, retrieval, gemini_call_count=None):
         if gemini_call_count is not None:
             gemini_call_count[0] += 1
         generated = Generate_claims(question, passages, assessment_payload)
-    except Exception:
-        return None, DOCUMENT_GENERATION_FAILED
+    except Exception as error:
+        logger.warning(
+            "rag_processing_failure stage=answer_generation error_type=%s",
+            type(error).__name__,
+        )
+        raise RAGProcessingError("Document answer generation failed") from error
     claims, claim_error = _valid_generated_claims(generated, reference_documents)
     if claims is None:
         return None, claim_error
@@ -231,8 +214,12 @@ def _document_answer(question, retrieval, gemini_call_count=None):
         if gemini_call_count is not None:
             gemini_call_count[0] += 1
         verification = Verify_document_claims(question, claims, passages)
-    except Exception:
-        return None, CITATION_VERIFICATION_FAILED
+    except Exception as error:
+        logger.warning(
+            "rag_processing_failure stage=claim_verification error_type=%s",
+            type(error).__name__,
+        )
+        raise RAGProcessingError("Document claim verification failed") from error
     verified = Validate_claim_verification(
         claims,
         verification,
@@ -243,6 +230,22 @@ def _document_answer(question, retrieval, gemini_call_count=None):
         return None, CITATION_VERIFICATION_FAILED
     if verified.reliability == "LOW":
         return None, DOCUMENT_ANSWER_UNRELIABLE
+
+    if assessment.coverage_status != "COMPLETE" or assessment.missing_facts:
+        missing = [
+            fact.strip()[:300] for fact in assessment.missing_facts
+            if isinstance(fact, str) and fact.strip()
+        ][:5]
+        limitation = "The documents cover only part of the question."
+        if missing:
+            limitation += " I could not find information about: " + "; ".join(missing) + "."
+        else:
+            limitation += " Unsupported details have been omitted."
+        verified = replace(
+            verified,
+            reliability="MODERATE" if verified.reliability == "HIGH" else verified.reliability,
+            disclosure=(f"{verified.disclosure} {limitation}" if verified.disclosure else limitation),
+        )
 
     sources = [reference_map[ref] for ref in verified.citations]
     source_by_ref = reference_map
@@ -284,7 +287,45 @@ def _answer_from_cache(payload):
 
 def _ask_question(question, user_id: int):
     index, chunks = Load_vector_store(user_id)
-    ready_document_ids = get_ready_document_filenames(user_id)
+    ready_document_hashes = get_ready_document_hashes(user_id)
+    ready_document_ids = set(ready_document_hashes)
+    cache_key = None
+    cacheable_index_state = ready_document_ids.issubset({
+        chunk.get("document_id", chunk.get("source"))
+        for chunk in chunks
+        if isinstance(chunk, dict) and chunk.get("user_id", user_id) == user_id
+        and isinstance(chunk.get("document_id", chunk.get("source")), str)
+    })
+    try:
+        pipeline_version = answer_cache.Pipeline_fingerprint(
+            generator, Get_calibrated_relevance_threshold()
+        )
+        context_fingerprint = answer_cache.Knowledge_base_fingerprint(
+            user_id, ready_document_hashes, pipeline_version
+        )
+        current_sources = _current_source_map(chunks, user_id, ready_document_ids)
+        query_hash = answer_cache.Query_hash(question)
+        cache_key = (query_hash, context_fingerprint, pipeline_version, current_sources)
+        if cacheable_index_state:
+            cached, reason, lookup_ms, calls_avoided = answer_cache.Lookup(
+                user_id, *cache_key
+            )
+            if cached is not None:
+                logger.info(
+                    "answer_cache outcome=hit lookup_ms=%.2f gemini_calls_avoided=%d",
+                    lookup_ms, calls_avoided,
+                )
+                return _answer_from_cache(cached)
+            logger.info("answer_cache outcome=%s lookup_ms=%.2f", reason, lookup_ms)
+        else:
+            logger.info("answer_cache outcome=bypass reason=index_missing_ready_document")
+    except Exception as error:
+        logger.warning(
+            "answer_cache outcome=fingerprint_unavailable error_type=%s",
+            type(error).__name__,
+        )
+        cache_key = None
+
     retrieval = Retrieve(
         question,
         index,
@@ -294,53 +335,36 @@ def _ask_question(question, user_id: int):
         k=5,
         allowed_document_ids=ready_document_ids,
     )
-    cache_key = None
-    try:
-        pipeline_version = answer_cache.Pipeline_fingerprint(
-            generator, retrieval.relevance_threshold
-        )
-        context_fingerprint = answer_cache.Context_fingerprint(
-            retrieval, user_id, pipeline_version
-        )
-        _, reference_map, _ = _passage_bundle(retrieval)
-        current_sources = {value["reference"]: value for value in reference_map.values()}
-        query_hash = answer_cache.Query_hash(question)
-        cache_key = (query_hash, context_fingerprint, pipeline_version, current_sources)
-        cached, reason, lookup_ms, calls_avoided = answer_cache.Lookup(
-            user_id, *cache_key
-        )
-        if cached is not None:
-            logger.info(
-                "answer_cache outcome=hit lookup_ms=%.2f gemini_calls_avoided=%d",
-                lookup_ms, calls_avoided,
-            )
-            return _answer_from_cache(cached)
-        logger.info("answer_cache outcome=%s lookup_ms=%.2f", reason, lookup_ms)
-    except Exception as error:
-        logger.warning(
-            "answer_cache outcome=fingerprint_unavailable error_type=%s",
-            type(error).__name__,
-        )
     gemini_call_count = [0]
-    if not retrieval.evidence_sufficient:
-        result = _general_knowledge_result(
-            question, NO_SUFFICIENT_DOCUMENT_EVIDENCE, gemini_call_count
-        )
+    if not retrieval.chunks:
+        reason = NO_SUFFICIENT_DOCUMENT_EVIDENCE
+        if not ready_document_hashes and not _user_has_documents(user_id):
+            reason = NO_DOCUMENTS_UPLOADED
+        result = _no_information_result(reason)
     else:
         result, fallback_reason = _document_answer(
             question, retrieval, gemini_call_count
         )
         if result is None:
-            result = _general_knowledge_result(
-                question, fallback_reason, gemini_call_count
-            )
+            result = _no_information_result(fallback_reason)
 
-    if cache_key is not None and result.answer_mode != INSUFFICIENT_CONFIDENCE:
+    cacheable_answer = result.answer_mode == DOCUMENT_SUPPORTED or (
+        result.answer_mode == INSUFFICIENT_CONFIDENCE
+        and result.fallback_reason in {NO_DOCUMENTS_UPLOADED, NO_SUFFICIENT_DOCUMENT_EVIDENCE}
+    )
+    if cache_key is not None and cacheable_index_state and cacheable_answer:
         answer_cache.Store(
             user_id, cache_key[0], cache_key[1], cache_key[2],
             result, gemini_call_count[0],
         )
     return result
+
+
+def _user_has_documents(user_id: int) -> bool:
+    with SessionLocal() as session:
+        return session.scalar(
+            select(Document.id).where(Document.user_id == user_id).limit(1)
+        ) is not None
 
 
 def Ask_question(question, user_id: int):

@@ -8,7 +8,7 @@
  *   Request:  { query: string }
  *   Response: {
  *     answer: string,
- *     answer_mode: 'DOCUMENT_SUPPORTED'|'GENERAL_KNOWLEDGE'|'INSUFFICIENT_CONFIDENCE',
+ *     answer_mode: 'DOCUMENT_SUPPORTED'|'INSUFFICIENT_CONFIDENCE',
  *     message: string|null,
  *     reliability: 'HIGH'|'MODERATE'|'LOW', conflict_status: string,
  *     claims: Array<{ text: string, classification: string, sources: Array }>,

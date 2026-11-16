@@ -15,7 +15,7 @@ from .relevance import EMBEDDING_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
-PIPELINE_VERSION = "rag-answer-v1"
+PIPELINE_VERSION = "rag-document-only-v4"
 
 def _ttl_seconds() -> int:
     value = os.getenv("ANSWER_CACHE_TTL_SECONDS", str(DEFAULT_TTL_SECONDS))
@@ -30,7 +30,7 @@ def _ttl_seconds() -> int:
 
 def Normalize_query(query: str) -> str:
     normalized = unicodedata.normalize("NFC", query)
-    return re.sub(r"\s+", " ", normalized.strip())
+    return re.sub(r"\s+", " ", normalized.strip()).casefold()
 
 
 def Query_hash(query: str) -> str:
@@ -44,7 +44,6 @@ def Pipeline_fingerprint(generator, relevance_threshold: float) -> str:
             getattr(generator, "EVIDENCE_SYSTEM_INSTRUCTION", "unknown"),
             getattr(generator, "DOCUMENT_SYSTEM_INSTRUCTION", "unknown"),
             getattr(generator, "VERIFICATION_SYSTEM_INSTRUCTION", "unknown"),
-            getattr(generator, "GENERAL_SYSTEM_INSTRUCTION", "unknown"),
         ],
         "embedding_model": EMBEDDING_MODEL_NAME,
         "retrieval_metric": "squared_l2",
@@ -55,32 +54,25 @@ def Pipeline_fingerprint(generator, relevance_threshold: float) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def Context_fingerprint(retrieval, user_id: int, pipeline_version: str) -> str:
-    if retrieval.user_id != user_id:
-        raise ValueError("Retrieval does not belong to the authenticated user")
-    chunks = []
-    for rank, chunk in enumerate(retrieval.chunks):
-        if (
-            chunk.user_id != user_id
-            or not isinstance(chunk.document_id, str) or not chunk.document_id
-            or not isinstance(chunk.source, str) or not isinstance(chunk.text, str)
-        ):
-            raise ValueError("Retrieval context is not safe to fingerprint")
-        content_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()
-        chunks.append({
-            "rank": rank,
-            "document_id": chunk.document_id,
-            "source": chunk.source,
-            "page": chunk.page,
-            "content_hash": content_hash,
-            "distance": float(chunk.distance).hex(),
-            "relevant": bool(chunk.relevant),
-        })
+def Knowledge_base_fingerprint(user_id: int, ready_document_hashes: dict[str, str],
+                               pipeline_version: str) -> str:
+    if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
+        raise ValueError("A valid user ID is required for the knowledge-base fingerprint")
+    if not isinstance(ready_document_hashes, dict):
+        raise ValueError("READY document hashes must be a mapping")
+    if any(
+        not isinstance(filename, str) or not filename
+        or not isinstance(digest, str) or not digest
+        for filename, digest in ready_document_hashes.items()
+    ):
+        raise ValueError("READY document metadata is invalid")
+    documents = []
+    for filename, digest in sorted(ready_document_hashes.items()):
+        documents.append((filename, digest.lower()))
     payload = {
         "user_id": user_id,
         "pipeline_version": pipeline_version,
-        "relevance_threshold": float(retrieval.relevance_threshold).hex(),
-        "chunks": chunks,
+        "documents": documents,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -101,7 +93,7 @@ def _validated_payload(row, current_sources: dict[str, dict]):
         validated = Query_Ans.model_validate(payload)
     except Exception:
         return None
-    if validated.answer_mode == "INSUFFICIENT_CONFIDENCE" or not validated.answer.strip():
+    if not validated.answer.strip():
         return None
     if validated.answer_mode == "DOCUMENT_SUPPORTED":
         if not validated.sources:
@@ -117,6 +109,14 @@ def _validated_payload(row, current_sources: dict[str, dict]):
                 current = current_sources.get(source.reference)
                 if current is None or source.model_dump() != current:
                     return None
+    elif validated.answer_mode == "INSUFFICIENT_CONFIDENCE":
+        if (
+            validated.sources or validated.claims
+            or validated.fallback_reason not in {
+                "NO_DOCUMENTS_UPLOADED", "NO_SUFFICIENT_DOCUMENT_EVIDENCE"
+            }
+        ):
+            return None
     elif validated.sources or validated.claims:
         return None
     return validated.model_dump()
@@ -158,7 +158,14 @@ def Lookup(user_id: int, query_hash: str, context_fingerprint: str,
 
 def Store(user_id: int, query_hash: str, context_fingerprint: str,
           pipeline_version: str, result, gemini_calls: int) -> bool:
-    if result.answer_mode not in {"DOCUMENT_SUPPORTED", "GENERAL_KNOWLEDGE"}:
+    cacheable_no_information = (
+        result.answer_mode == "INSUFFICIENT_CONFIDENCE"
+        and result.fallback_reason in {
+            "NO_DOCUMENTS_UPLOADED", "NO_SUFFICIENT_DOCUMENT_EVIDENCE"
+        }
+        and not result.sources and not result.claims
+    )
+    if result.answer_mode != "DOCUMENT_SUPPORTED" and not cacheable_no_information:
         return False
     try:
         payload = Query_Ans.model_validate({

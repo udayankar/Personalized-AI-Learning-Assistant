@@ -54,7 +54,7 @@ class AnswerCache(Base):
             name="uq_answer_cache_exact_context",
         ),
         CheckConstraint(
-            "answer_mode IN ('DOCUMENT_SUPPORTED', 'GENERAL_KNOWLEDGE')",
+            "answer_mode IN ('DOCUMENT_SUPPORTED', 'INSUFFICIENT_CONFIDENCE')",
             name="ck_answer_cache_answer_mode",
         ),
         CheckConstraint("gemini_calls >= 0", name="ck_answer_cache_gemini_calls"),

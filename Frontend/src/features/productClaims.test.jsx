@@ -39,7 +39,8 @@ describe('accurate product claims', () => {
 
     expect(screen.getAllByText(/text-based/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/scanned PDFs are not (currently )?OCR-processed/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/general AI knowledge/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/If the documents do not contain relevant information, the assistant says so/i)).toBeInTheDocument();
+    expect(screen.queryByText(/general AI knowledge/i)).not.toBeInTheDocument();
     expect(screen.getByText(/HttpOnly JWT cookie and CSRF checks/i)).toBeInTheDocument();
     expect(screen.getByText(/persistence across deployments depends on host storage/i)).toBeInTheDocument();
     expect(screen.getByText(/Local FAISS vector search index for each account/i)).toBeInTheDocument();
@@ -48,11 +49,12 @@ describe('accurate product claims', () => {
     expect(screen.queryByText(/Every answer cited with document name and exact page numbers/i)).not.toBeInTheDocument();
   });
 
-  test('dashboard distinguishes document evidence from general AI knowledge and describes local storage', () => {
+  test('dashboard describes document-grounded answers and local storage', () => {
     renderWithAppState(<DashboardPage />);
 
-    expect(screen.getAllByText(/searches your documents first/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/general AI knowledge/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Answers use retrieved passages from your documents/i)).toBeInTheDocument();
+    expect(screen.getByText(/factual answer claims must be supported by those passages/i)).toBeInTheDocument();
+    expect(screen.queryByText(/general AI knowledge/i)).not.toBeInTheDocument();
     expect(screen.getByText(/server's local filesystem/i)).toBeInTheDocument();
     expect(screen.getByText(/persistence across deployments depends on the host/i)).toBeInTheDocument();
     expect(screen.queryByText(/answers come from your documents, not generic knowledge/i)).not.toBeInTheDocument();

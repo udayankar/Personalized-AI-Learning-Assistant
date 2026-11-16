@@ -55,10 +55,13 @@ def Retrieve(query, index, chunks, model, user_id: int, k=5, allowed_document_id
         ):
             continue
         results.append({**chunk, "distance": float(distance)})
-        if len(results) >= k:
-            break
 
-    return Make_retrieval_result(query, user_id, results, threshold)
+    results.sort(key=lambda chunk: (
+        chunk["distance"],
+        str(chunk.get("document_id", chunk.get("source", ""))),
+    ))
+
+    return Make_retrieval_result(query, user_id, results[:k], threshold)
 
 def Save_vector_store(index, chunks, user_id: int):
     _, storage_dir = Get_user_paths(user_id)
