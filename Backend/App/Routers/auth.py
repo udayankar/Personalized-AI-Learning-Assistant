@@ -9,10 +9,11 @@ import secrets
 from ..database import get_db
 from ..utils import verify_password
 from .. import models
+from ..rate_limit import ip_rate_limit
 
 router = APIRouter(prefix="/users")
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(ip_rate_limit("login"))])
 async def login(userinfo : schemas.Login_User , response : Response , request: Request, db : Session = Depends(get_db), _csrf=Depends(require_csrf)):
     user = db.execute(select(models.User).where(models.User.Email == userinfo.Email)).scalar_one_or_none()
     if user == None:

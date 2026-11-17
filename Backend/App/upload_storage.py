@@ -1,8 +1,10 @@
 import asyncio
 import os
 import re
+import threading
+import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -10,6 +12,14 @@ from pypdf import PdfReader
 
 
 STREAM_CHUNK_SIZE = 64 * 1024
+_path_locks: dict[str, threading.Lock] = {}
+_path_locks_guard = threading.Lock()
+
+
+def _in_process_lock(lock_path: Path) -> threading.Lock:
+    key = str(lock_path.resolve()).casefold()
+    with _path_locks_guard:
+        return _path_locks.setdefault(key, threading.Lock())
 
 
 class UploadTooLarge(Exception):
@@ -149,15 +159,40 @@ def _release_file_lock(handle) -> None:
 
 @asynccontextmanager
 async def per_user_upload_lock(lock_path: Path):
-    # Nonblocking OS locks coordinate same-user upload and delete operations
-    # across application workers, including their FAISS index rebuilds.
-    while True:
-        try:
-            handle = _try_acquire_file_lock(lock_path)
-            break
-        except BlockingIOError:
-            await asyncio.sleep(0.05)
+    # The threading lock also serializes threads on Windows, where msvcrt locks
+    # are process-scoped. The OS lock coordinates separate backend processes.
+    local_lock = _in_process_lock(lock_path)
+    while not local_lock.acquire(blocking=False):
+        await asyncio.sleep(0.05)
+    handle = None
     try:
+        while True:
+            try:
+                handle = _try_acquire_file_lock(lock_path)
+                break
+            except BlockingIOError:
+                await asyncio.sleep(0.05)
         yield
     finally:
-        _release_file_lock(handle)
+        if handle is not None:
+            _release_file_lock(handle)
+        local_lock.release()
+
+
+@contextmanager
+def blocking_file_lock(lock_path: Path):
+    """Acquire the same OS lock synchronously, for startup recovery."""
+    local_lock = _in_process_lock(lock_path)
+    local_lock.acquire()
+    try:
+        while True:
+            try:
+                handle = _try_acquire_file_lock(lock_path)
+                break
+            except BlockingIOError:
+                time.sleep(0.05)
+        yield
+    finally:
+        if handle is not None:
+            _release_file_lock(handle)
+        local_lock.release()

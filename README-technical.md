@@ -6,7 +6,7 @@ A web application for asking questions about your own PDF study materials, with 
 
 ## What it does
 
-Students can create an account, upload PDFs, and ask questions about the material they have uploaded. The backend extracts text, builds a per-user FAISS index, retrieves passages for each question, and uses Gemini to assess evidence, draft claims, and verify the claims against their cited passages.
+Students can create an account, upload PDFs, and ask questions about the material they have uploaded. The backend temporarily processes each PDF, stores chunks and Gemini embeddings in PostgreSQL/pgvector, retrieves passages for the authenticated user, and uses Gemini to assess evidence, draft claims, and verify the claims against their cited passages.
 
 Responses distinguish among:
 
@@ -21,12 +21,12 @@ Claim verification is model-assisted. The backend checks response structure and 
 - Account signup, login, logout, and authenticated user lookup.
 - JWT authentication in an HttpOnly cookie, with CSRF token checks and exact Origin validation for unsafe browser requests.
 - PDF upload and text extraction by page using `pypdf`.
-- Character-based text chunks (1,000 characters, with 200-character overlap) and local `all-MiniLM-L6-v2` embeddings.
-- Per-user FAISS `IndexFlatL2` retrieval, currently limited to the five nearest chunks and a calibrated distance cutoff.
+- Character-based text chunks (1,000 characters, with 200-character overlap) and Gemini `gemini-embedding-001` embeddings (768 dimensions, normalized).
+- Per-user PostgreSQL/pgvector exact L2 retrieval, limited to the five nearest READY chunks and a configuration-matched calibrated distance cutoff.
 - Evidence assessment, claim generation, model-assisted claim verification, source excerpts, and disclosure of detected contradictions.
 - Document-supported and no-information response modes; technical generation failures are returned as HTTP errors.
 - Exact answer caching scoped to the user, normalized query, current retrieval context, and pipeline fingerprint.
-- PostgreSQL persistence for accounts, the per-user document catalog, and answer-cache records, managed through Alembic migrations.
+- PostgreSQL persistence for accounts, document metadata, chunks, embeddings, and answer-cache records, managed through Alembic migrations.
 
 ### Current API
 
@@ -40,7 +40,7 @@ Claim verification is model-assisted. The backend checks response structure and 
 | `POST` | `/documents/upload` | Upload and index one PDF for the authenticated user. |
 | `GET` | `/documents` | List the authenticated user's documents. |
 | `GET` | `/documents/{document_id}` | Return details for one document owned by the authenticated user. |
-| `DELETE` | `/documents/{document_id}` | Delete one owned document and rebuild that user's index. |
+| `DELETE` | `/documents/{document_id}` | Delete one owned document and its chunks. |
 | `POST` | `/chat/query` | Ask a question and receive an answer, mode, claims, and sources. |
 
 ## API examples
@@ -159,12 +159,12 @@ No genuine application screenshots, GIFs, or videos are currently checked into t
 flowchart TD
     A[React frontend] --> B[FastAPI API]
     B --> C[JWT authentication and user identity]
-    C --> D[PostgreSQL document catalog and user-specific filesystem storage]
-    D --> E[Load active index version, chunks, and READY document hashes]
+    C --> D[PostgreSQL document catalog, chunks, embeddings, answer cache]
+    D --> E[Load READY chunk provenance and document hashes]
     B --> F{Per-user cache lookup}
     E --> F
     F -->|Valid hit| K[Response: answer mode, claims, sources]
-    F -->|Miss| G[Query embedding and FAISS retrieval]
+    F -->|Miss| G[Gemini query embedding and pgvector exact L2 retrieval]
     G --> H[Gemini evidence assessment]
     H --> I[Gemini claim generation and verification]
     I --> K
@@ -174,42 +174,39 @@ flowchart TD
     J --> K
 ```
 
-The cache lookup follows loading the user's current index metadata and document hashes. A valid hit avoids query embedding, FAISS search, and Gemini calls. There is no broader-retrieval or general-knowledge fallback.
+The cache lookup follows loading the user's READY chunk provenance and document hashes. A valid hit avoids query embedding and vector search. There is no broader-retrieval or general-knowledge fallback.
 
 ## RAG and document processing
 
-1. The authenticated user uploads a PDF. The backend streams it to a staged file, validates it, publishes it in that user's document directory, and records its hash and `PROCESSING` status in PostgreSQL.
+1. The authenticated user uploads a PDF. The backend streams it to a temporary file, validates it, and records its hash and `PROCESSING` status in PostgreSQL.
 2. `pypdf` extracts text from pages. Pages with no extractable text do not produce chunks.
-3. `RecursiveCharacterTextSplitter` splits each page into 1,000-character chunks with 200-character overlap; page and filename metadata are retained.
-4. SentenceTransformers creates local embeddings. FAISS stores vectors in an `IndexFlatL2` index for that user. Chunk metadata records the owning user, document ID, and source document hash.
-5. A question is embedded and the five nearest chunks are retrieved. The calibrated squared-L2 cutoff is retained as a retrieval signal, but all top-five candidates reach evidence assessment because held-out threshold recall is limited.
+3. The local character splitter divides each page into chunks up to 1,000 characters with 200-character overlap; page and filename metadata are retained.
+4. Gemini creates 768-dimensional normalized `RETRIEVAL_DOCUMENT` embeddings. Chunks, vectors, and the transition to `READY` are committed together in PostgreSQL.
+5. A question is embedded with `RETRIEVAL_QUERY`; pgvector's `<->` operator runs exact L2 search restricted to the authenticated user's READY documents, returning at most five chunks. The matching calibration cutoff is required before retrieval.
 6. Gemini assesses coverage, drafts claims from the retrieved passages, and separately verifies claims against their cited passages. The backend constructs citations from those retrieved passages and drops or qualifies claims according to verification.
 7. If there is no relevant support or the generated claims cannot be verified, the API returns a no-information response. If an external model call fails, the API returns HTTP 503 instead of disguising the failure as missing information.
 
-The cutoff was calibrated using a small synthetic retrieval fixture. It is not a guarantee of relevance for arbitrary user documents.
+The checked-in cutoff was calibrated using MiniLM and is rejected by runtime. The synthetic evaluation fixture is small; run the Gemini evaluation and review its validation scores before publishing a matching calibration artifact. It does not establish a reliable production threshold by itself.
 
-PostgreSQL is the runtime source of truth for document ownership, lifecycle status, and PDF hashes. New documents are added incrementally; hash changes or removed catalog documents trigger an index rebuild from eligible PDFs. The legacy `documents.json` reader is retained only by `scripts/backfill_documents.py` for one-time import of older local documents.
-
-Index versions are written under `RAG_STORAGE_ROOT/user_<id>/versions/` with a FAISS index, UTF-8 JSON chunks, and a checksum manifest. An atomic root `manifest.json` selects the active version, so readers load a matching immutable index/metadata pair. Runtime code never deserializes `chunks.pkl`. A trusted legacy store requires explicit migration with `python -m scripts.migrate_legacy_vector_store --user-id <id> --trusted-local-files`; the migration preserves the original legacy files.
+PostgreSQL is the source of truth for document metadata, chunks, vectors, and answer cache. Upload failures roll back all chunks; incomplete `PROCESSING` documents are marked `FAILED` at startup. Deletion marks the document `DELETING`, invalidates that user's cache, and deletes the document and its chunks in a transaction. Original PDFs exist only in a temporary upload path during processing.
 
 ## Security and data isolation
 
 - The authenticated identity comes from the server-validated JWT `sub` claim; request-supplied user IDs are not used to select a user's private store.
 - JWTs are held in HttpOnly cookies and are not exposed to frontend JavaScript.
 - Unsafe cookie-authenticated requests require a valid signed CSRF token and an exact configured Origin. CORS is configured with explicit origins and credentials.
-- PDFs and versioned indexes/chunks are stored under user-specific local filesystem paths. PostgreSQL stores document metadata and lifecycle state. Retrieval and cache queries are also scoped by user ID.
-- PostgreSQL Row-Level Security is **not** implemented. Isolation is enforced in application logic and filesystem paths, not by RLS policies.
+- Retrieval SQL filters on both chunk and document `user_id` and requires document status `READY`; the database also has a composite tenant/document foreign key. PostgreSQL RLS is not enabled: application filtering remains mandatory, and RLS was not selected because Neon connection pooling and transaction-scoped tenant context would add complexity without replacing these predicates.
 - The answer cache stores generated answers and source data in PostgreSQL. It must be treated as private user content.
 
 These controls reduce accidental cross-user access but are not a claim of complete or production-certified security. Use an appropriately restricted database account in deployed environments.
 
 ## Answer cache
 
-The cache uses a hash of the query after Unicode NFC normalization, whitespace collapsing, and case folding; punctuation remains significant. It is not semantic caching. Cache identity includes the authenticated user, hashes of all READY documents, and a fingerprint of the document-only prompts, model name, embedding model, retrieval metric, top-k, and threshold.
+The cache uses a hash of the query after Unicode NFC normalization, whitespace collapsing, and case folding; punctuation remains significant. It is not semantic caching. Cache identity includes the authenticated user, hashes of all READY documents, and a fingerprint of prompts, generator model, embedding provider/model/dimensions, document and query task types, normalization, exact L2 metric, top-k, and calibration threshold.
 
 Before returning a cached document answer, the backend validates the response schema and checks that its source excerpts and claim citations match current chunks belonging to READY documents for that user. It may also cache legitimate no-information responses, but never technical failures. Cache entries expire after 24 hours by default; set `ANSWER_CACHE_TTL_SECONDS` to change the lifetime. Cache database errors fall back to the normal RAG path.
 
-A cache lookup occurs after the current index/chunks and READY-document hashes are loaded, before query embedding and FAISS retrieval. A valid hit skips retrieval and Gemini calls. Any READY-document content change or pipeline change invalidates reuse; cache database errors proceed through normal retrieval and answering.
+A cache lookup occurs after current chunk provenance and READY-document hashes are loaded, before query embedding and pgvector retrieval. A valid hit skips retrieval and Gemini calls. Any READY-document content change or pipeline change invalidates reuse; cache database errors proceed through normal retrieval and answering.
 
 ## Technology stack
 
@@ -218,9 +215,9 @@ A cache lookup occurs after the current index/chunks and READY-document hashes a
 - **Frontend:** React 18, React Router, Redux Toolkit, Axios, Parcel, CSS Modules, React Markdown.
 - **API:** Python, FastAPI, Pydantic, SQLAlchemy, PyJWT, `pwdlib`.
 - **Database and migrations:** PostgreSQL, SQLAlchemy, Alembic.
-- **Document/RAG:** `pypdf`, LangChain text splitters, SentenceTransformers (`all-MiniLM-L6-v2`), FAISS CPU.
+- **Document/RAG:** `pypdf`, local character chunking, Google Gen AI SDK embeddings, PostgreSQL with pgvector.
 - **Generation:** Google Gen AI SDK and Gemini (`gemini-3.6-flash`, as configured in the current source).
-- **Storage:** local filesystem for PDFs and immutable FAISS/JSON index versions; PostgreSQL stores the document catalog and answer cache.
+- **Storage:** PostgreSQL stores document metadata, text chunks, vectors, and answer cache; PDFs are temporary processing files only.
 
 ### Development and tests
 
@@ -232,11 +229,12 @@ The project does not currently use a hosted vector database, Redis, or a recomme
 
 ## Database schema
 
-The current PostgreSQL schema contains accounts, a per-user document catalog, and exact-answer-cache records. Documents and cache rows have foreign keys to their owning user and are deleted when that user row is deleted. The unique cache key is `(user_id, normalized_query_hash, context_fingerprint, pipeline_version)`; check constraints restrict cacheable answer modes and require a nonnegative `gemini_calls` value.
+The PostgreSQL schema contains accounts, a per-user document catalog, pgvector document chunks, and exact-answer-cache records. Chunk rows have a composite foreign key to the matching `(document_id, user_id)` pair, preventing tenant/document mismatch, and cascade with document deletion. The unique cache key is `(user_id, normalized_query_hash, context_fingerprint, pipeline_version)`.
 
 ```mermaid
 erDiagram
     users ||--o{ documents : owns
+    documents ||--o{ document_chunks : contains
     users ||--o{ answer_cache : owns
 
     users {
@@ -260,6 +258,21 @@ erDiagram
         timestamptz updated_at
     }
 
+    document_chunks {
+        int id PK
+        int user_id FK
+        varchar document_id FK
+        int chunk_index
+        text text
+        int page_number
+        vector embedding
+        varchar embedding_provider
+        varchar embedding_model
+        int embedding_dimensions
+        varchar embedding_task_type
+        timestamptz created_at
+    }
+
     answer_cache {
         int id PK
         int user_id FK
@@ -280,7 +293,7 @@ erDiagram
     }
 ```
 
-`users.ID` is an integer primary key; `Name` is `VARCHAR(100)`, `Email` is `VARCHAR(255)` with a unique index, `Password` is `VARCHAR(255)` containing a password hash, and `Created_at` is a timezone-aware timestamp defaulting to `now()`. `documents.id` is a 36-character string primary key. The `(user_id, storage_filename)` pair is unique, and status is constrained to `PROCESSING`, `READY`, `FAILED`, or `DELETING`. `documents` also has a `(user_id, status)` index. `answer_cache` uses a 64-character query hash and context fingerprint, a 128-character pipeline version, JSON `claims` and `sources`, plus the other fields shown above. It also has an expiry index and an index on `user_id`. PDF bytes, FAISS indexes, and chunk JSON are stored on the filesystem, not in PostgreSQL tables.
+`users.ID` is an integer primary key; `documents.id` is a 36-character string primary key. `document_chunks` stores a 768-dimensional pgvector vector and has unique `(document_id, chunk_index)` positions and a composite tenant/document foreign key. `answer_cache` is indexed by user and expiry. PDFs are temporary files and are not a persistence layer.
 
 ## Setup
 
@@ -312,7 +325,10 @@ For local development, edit `Backend/.env` and set the required values. The exam
 |---|---|
 | `APP_ENV` | `development`, `test`, or `production`; must be explicit. |
 | `DATABASE_URL` | SQLAlchemy PostgreSQL connection used by the API and Alembic. |
-| `LLM_API_KEY` | Gemini API key. |
+| `LLM_API_KEY` | Gemini API key used for answers and embeddings. Required in production; startup validates its presence but does not call Gemini. |
+| `EMBEDDING_PROVIDER` | `gemini` (currently the supported provider). |
+| `EMBEDDING_MODEL` | `gemini-embedding-001`. |
+| `EMBEDDING_DIMENSIONS` | `768`; must match the pgvector column and calibration configuration. |
 | `SECRET_KEY` | JWT signing secret. |
 | `ALGORITHM` | JWT algorithm (the example uses `HS256`). |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT lifetime. |
@@ -324,10 +340,17 @@ For local development, edit `Backend/.env` and set the required values. The exam
 | `MAX_PDF_UPLOAD_SIZE_BYTES` | Per-file upload limit; default is 20 MiB. |
 | `MAX_PDF_PAGE_COUNT` | Page limit; default is 250. |
 | `MAX_USER_PDF_STORAGE_BYTES` | Per-user PDF storage limit; default is 200 MiB. |
-| `DOCUMENTS_ROOT` | Root directory for user PDF files; configure durable storage in deployment. |
-| `RAG_STORAGE_ROOT` | Root directory for versioned FAISS indexes and JSON chunks; configure durable storage in deployment. |
+| `RATE_LIMIT_ENABLED` | Enables process-local limits (enabled by default outside tests). |
+| `RATE_LIMIT_TRUST_CF_CONNECTING_IP` | Set `true` on Render production to use its Cloudflare-overwritten `CF-Connecting-IP` visitor header. The app ignores `X-Forwarded-For`. |
+| `RATE_LIMIT_LOGIN_REQUESTS`, `RATE_LIMIT_LOGIN_WINDOW_SECONDS` | Login attempts per client IP/window; defaults to 10 per 900 seconds. |
+| `RATE_LIMIT_SIGNUP_REQUESTS`, `RATE_LIMIT_SIGNUP_WINDOW_SECONDS` | Signups per client IP/window; defaults to 5 per 3600 seconds. |
+| `RATE_LIMIT_UPLOAD_REQUESTS`, `RATE_LIMIT_UPLOAD_WINDOW_SECONDS` | Uploads per authenticated user/window; defaults to 5 per 3600 seconds. |
+| `RATE_LIMIT_CHAT_REQUESTS`, `RATE_LIMIT_CHAT_WINDOW_SECONDS` | Chat requests per authenticated user/window; defaults to 20 per 60 seconds. |
+| `RATE_LIMIT_MAX_BUCKETS` | Maximum in-memory rate-limit identities; defaults to 20,000. New identities receive 429 while all slots remain active. |
 
 Generate secrets with a cryptographically secure random generator. Do not use example values or reuse the JWT key for CSRF signing.
+
+Rate limiting is held in process memory to match the single-process Render deployment. It is concurrency-safe and bounded, but counters reset on process restart and are not shared across multiple instances. Keep one backend instance if these limits are relied on. Set `RATE_LIMIT_TRUST_CF_CONNECTING_IP=true` in Render; the limiter trusts that header only when explicitly enabled and never parses caller-controlled `X-Forwarded-For` values.
 
 Create the PostgreSQL database using your local PostgreSQL administration workflow, then put its SQLAlchemy URL in `DATABASE_URL`. The application does not provision PostgreSQL roles or databases automatically.
 
@@ -378,7 +401,7 @@ python scripts/evaluate_rag.py
 python scripts/evaluate_rag_answers.py
 ```
 
-The retrieval evaluator loads the SentenceTransformer model and may download its weights on first use. It writes the runtime calibration artifact only when explicitly run with `--write-calibration`; review generated values before replacing the artifact.
+The retrieval evaluator calls the configured Gemini embedding API and therefore requires `LLM_API_KEY`; it makes provider requests. It writes a calibration artifact only when explicitly run with `--write-calibration`; review results before replacing the artifact. The checked-in calibration was generated with `all-MiniLM-L6-v2` and is rejected by runtime. The bundled 40-case synthetic retrieval set is a smoke evaluation, not a reliable production calibration; establish a representative held-out dataset before enabling calibrated Gemini retrieval. No application startup Gemini call is made.
 
 The answer evaluator is deterministic and makes no Gemini calls. It tests validators against manually authored answer/verifier fixtures. Both evaluation datasets are small and synthetic; their metrics are not measurements of live Gemini accuracy or real student outcomes. The optional `python scripts/evaluate_rag_answers.py --live-sample` makes live Gemini requests using four synthetic examples and may incur API usage.
 
@@ -393,13 +416,13 @@ Tests mock external model calls and use local test fixtures where appropriate. T
 
 ## Storage and deployment considerations
 
-By default, the backend stores user PDFs beneath `Backend/Data/Documents/Users/user_<id>/` and versioned FAISS indexes and JSON chunks beneath `Backend/Storage/Users/user_<id>/versions/`. The root `manifest.json` atomically selects the active immutable version; its per-version manifest records checksums that bind the FAISS index and chunks together. These directories are local runtime data and are excluded from source control. A deployment with an ephemeral filesystem will lose uploaded documents and indexes when that filesystem is replaced. Preserve both configured roots with durable storage and include them in an explicit backup/restore plan. Old versions are retained for concurrent readers and rollback, so monitor disk use and plan retention before storing large corpora.
+PostgreSQL is authoritative for document ownership, lifecycle status, chunks, and embeddings. Only upload work files use local temporary storage and are removed on success, failure, and startup recovery. Existing MiniLM FAISS indexes and mock catalog rows are not migrated or deleted automatically; they are not read by the runtime. Re-upload any PDF needed in the new schema.
 
-PostgreSQL is authoritative for document ownership, lifecycle status, and PDF hashes. The legacy `documents.json` file is read only by `scripts/backfill_documents.py` when importing older local documents; it is not used by runtime ingestion. Legacy `chunks.pkl` indexes are not loaded by the application. After verifying the files came from a trusted local installation, migrate an existing user's store from `Backend` with `python -m scripts.migrate_legacy_vector_store --user-id <id> --trusted-local-files`. The script checks the legacy chunks against that user's database catalog and preserves the originals.
+At startup, interrupted `PROCESSING` records and READY records without chunks are marked `FAILED`; `DELETING` rows are completed using database cascades. Startup recovery performs no vector manifest or legacy file recovery.
 
-At startup, interrupted `PROCESSING` records are marked `FAILED`, abandoned upload/index temporary files are cleaned, and a valid previous manifest can restore a damaged active pointer. `DELETING` rows and tombstones remain retryable through the delete endpoint. Startup recovery currently assumes one application process; deploy one worker until recovery coordination supports multiple workers.
+For Render, set `DATABASE_URL` to the Neon connection string, `LLM_API_KEY`, `EMBEDDING_PROVIDER=gemini`, `EMBEDDING_MODEL=gemini-embedding-001`, `EMBEDDING_DIMENSIONS=768`, `APP_ENV=production`, strong independent `SECRET_KEY` and `CSRF_SECRET_KEY`, `ALGORITHM=HS256`, `ACCESS_TOKEN_EXPIRE_MINUTES=30`, `COOKIE_SECURE=true`, `COOKIE_SAMESITE=lax`, and `CORS_ALLOWED_ORIGINS` to the frontend HTTPS origin. With the Render root directory set to `Backend`, use build command `pip install -r requirements.txt` and start command `alembic upgrade head && uvicorn App.main:app --host 0.0.0.0 --port $PORT`. No durable disk is needed for vector data. After the calibration artifact matches Gemini and L2, upload a PDF, ask a question that should cite it, restart/redeploy the backend, then ask the same question and confirm its citation remains available. The checked-in MiniLM calibration is rejected, so retrieval is intentionally unavailable until a reviewed Gemini calibration is supplied. No live deployment is claimed.
 
-The current implementation is a single-application design, not a deployment package: no container, cloud storage, deployment manifest, or production database-role provisioning is included. Configure HTTPS, production cookie settings, exact CORS origins, durable storage, restricted database credentials, and migrations as part of deployment. Set production environment variables through the hosting provider's configuration interface; do not rely on a checked-in or uploaded development `.env`. No live deployment is claimed.
+Run local automated checks from `Backend` with `python -m unittest discover -s tests -v`; the suite mocks Gemini and needs no paid API calls. For the real vector operator against a migrated PostgreSQL/pgvector test database, set `PGVECTOR_TEST_DATABASE_URL` and run `python -m unittest tests.test_pgvector_integration -v`. The integration test wraps all temporary rows in a transaction and rolls it back. Do not point it at an important database. The Gemini evaluation command `python scripts/evaluate_rag.py --write-calibration` makes real embedding API requests; review its limited synthetic validation results before using the generated artifact.
 
 ## Current limitations
 
@@ -411,16 +434,14 @@ The current implementation is a single-application design, not a deployment pack
 ### RAG limitations
 
 - PDF text extraction only; there is no OCR pipeline for scanned pages or general document understanding.
-- Chunk size/overlap and top-five retrieval are fixed. Retrieval uses one local embedding model and a threshold calibrated on a small synthetic dataset.
+- Chunk size/overlap and top-five retrieval are fixed. Gemini vectors use 768-dimensional normalization and pgvector exact L2 search. The checked-in relevance calibration is MiniLM-based and rejected; the Gemini synthetic fixture is too small to establish a reliable production threshold without broader evaluation data.
 - There is no broader-retrieval or general-knowledge fallback. The assistant returns no-information when retrieved content cannot support a verified answer.
 - Gemini claim verification is model-assisted, not a deterministic entailment proof or correctness guarantee.
 - Evaluation fixtures are small and synthetic; they do not establish live Gemini accuracy or learning outcomes.
 
 ### Operational limitations
 
-- PDFs, FAISS indexes, and chunks are local filesystem data; no distributed/shared storage layer is configured. Ephemeral hosting storage would lose this data.
-- PostgreSQL RLS is not implemented; per-user isolation is enforced by application logic and filesystem paths.
-- The synchronous RAG call and local indexing work can be resource-intensive. Multiple application workers are not supported by current startup recovery, and old immutable index versions require disk monitoring.
+- Gemini embedding requests run synchronously during ingestion and query retrieval. Provider outages do not prevent backend startup, but embedding-dependent operations fail with explicit bounded retries. Exact vector search has not yet been benchmarked against the production corpus.
 
 ## Roadmap
 
@@ -433,18 +454,16 @@ Backend/
   App/
     Routers/       Auth, chat, signup, and document-upload routes
     base.py        Shared SQLAlchemy declarative base
-    models.py      users, documents, and answer_cache tables
+    models.py      users, documents, document_chunks, and answer_cache tables
     schemas.py     Request and response schemas
     database.py    SQLAlchemy engine, sessions, and get_db dependency
     csrf.py        CSRF and CORS configuration
-  Rag/             PDF ingestion, per-user FAISS retrieval, answer generation, cache
+  Rag/             temporary PDF ingestion, pgvector retrieval, answer generation, cache
   alembic/
     versions/      User, document-catalog, and answer-cache migrations
   scripts/         RAG evaluators and legacy catalog/vector-store migration tools
   tests/
     fixtures/      Synthetic retrieval and answer-validation datasets
-  Data/Documents/  Runtime user PDF paths: Users/user_<id>/
-  Storage/         Runtime versioned index/chunk paths: Users/user_<id>/versions/
   .env.example     Backend configuration template
   alembic.ini      Alembic configuration (credentials are read from .env)
   requirements.txt Runtime Python dependencies

@@ -6,10 +6,12 @@ from ..database import get_db
 from ..utils import hashed_password
 from .. import models
 from ..csrf import require_csrf
+from ..rate_limit import ip_rate_limit
 
 router = APIRouter(prefix="/users" , tags=["Users"])
 
-@router.post("/signup" , response_model=schemas.Return_Signup_User )
+@router.post("/signup" , response_model=schemas.Return_Signup_User,
+             dependencies=[Depends(ip_rate_limit("signup"))])
 async def SignupUser(payload : schemas.Signup_User , response : Response , db : Session=Depends(get_db), _csrf=Depends(require_csrf)):
     existing =  db.execute(select(models.User).where(models.User.Email == payload.Email)).scalar_one_or_none()
     if existing:

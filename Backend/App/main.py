@@ -4,6 +4,7 @@ from starlette.concurrency import run_in_threadpool
 from .config import get_upload_settings
 from .csrf import configure_csrf_protection
 from .document_recovery import recover_interrupted_document_work
+from .rate_limit import validate_rate_limit_configuration
 from .Routers import chat, documents, auth, signup
 
 @asynccontextmanager
@@ -14,6 +15,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 configure_csrf_protection(app)
 get_upload_settings()
+validate_rate_limit_configuration()
 
 app.include_router(chat.router)
 app.include_router(documents.router)

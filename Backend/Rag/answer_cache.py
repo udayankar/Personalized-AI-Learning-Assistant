@@ -11,11 +11,12 @@ from sqlalchemy.exc import IntegrityError
 from App.database import SessionLocal
 from App.models import AnswerCache
 from App.schemas import Query_Ans
-from .relevance import EMBEDDING_MODEL_NAME
+from .embedder import get_embedding_configuration
+from .chunker import get_chunking_configuration
 
 logger = logging.getLogger(__name__)
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
-PIPELINE_VERSION = "rag-document-only-v4"
+PIPELINE_VERSION = "rag-pgvector-exact-l2-v6"
 
 def _ttl_seconds() -> int:
     value = os.getenv("ANSWER_CACHE_TTL_SECONDS", str(DEFAULT_TTL_SECONDS))
@@ -45,8 +46,9 @@ def Pipeline_fingerprint(generator, relevance_threshold: float) -> str:
             getattr(generator, "DOCUMENT_SYSTEM_INSTRUCTION", "unknown"),
             getattr(generator, "VERIFICATION_SYSTEM_INSTRUCTION", "unknown"),
         ],
-        "embedding_model": EMBEDDING_MODEL_NAME,
-        "retrieval_metric": "squared_l2",
+        "embedding": get_embedding_configuration().as_dict(),
+        "chunking": get_chunking_configuration(),
+        "retrieval_metric": get_embedding_configuration().distance_metric,
         "retrieval_top_k": 5,
         "relevance_threshold": float(relevance_threshold),
     }

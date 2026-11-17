@@ -1,531 +1,181 @@
-import importlib
-import hashlib
-import json
-import sys
-import types
+import math
 import unittest
-from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+from unittest.mock import patch
 
-import numpy as np
-from pypdf import PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
 
-
-# Avoid loading model weights or contacting model providers in storage/isolation tests.
-for _module_name in (
-    "Rag.rag",
-    "Rag.ingest",
-    "Rag.embedder",
-    "Rag.generator",
-    "Rag.vector_store",
-    "Rag.document_tracker",
-    "Rag.user_storage",
-):
-    sys.modules.pop(_module_name, None)
-
-sentence_transformers_stub = types.ModuleType("sentence_transformers")
-sentence_transformers_stub.SentenceTransformer = lambda *_args, **_kwargs: Mock()
-generator_stub = types.ModuleType("Rag.generator")
-generator_stub.Assess_document_evidence = Mock(return_value={
-    "coverage_status": "COMPLETE",
-    "required_facts": [{"fact_id": "F1", "description": "Relevant fact", "reference_ids": ["R1"]}],
-    "missing_facts": [], "relationships": [],
-})
-generator_stub.Generate_claims = Mock(return_value={
-    "claims": [{"claim_id": "C1", "text": "Test answer", "citation_ids": ["R1"]}],
-})
-generator_stub.Verify_document_claims = Mock(side_effect=lambda _question, claims, _passages: {
-    "claim_results": [{
-        "claim_id": claim["claim_id"], "classification": "SUPPORTED",
-        "citation_ids": claim["citation_ids"], "qualified_text": None,
-    } for claim in claims],
-    "relationships": [],
-})
-with patch.dict(
-    sys.modules,
-    {
-        "sentence_transformers": sentence_transformers_stub,
-        "Rag.generator": generator_stub,
-    },
-):
-    ingest = importlib.import_module("Rag.ingest")
-    rag = importlib.import_module("Rag.rag")
-    vector_store = importlib.import_module("Rag.vector_store")
-    user_storage = importlib.import_module("Rag.user_storage")
-    document_tracker = importlib.import_module("Rag.document_tracker")
-    relevance = importlib.import_module("Rag.relevance")
+from App.base import Base
+from App.models import Document, DocumentChunk, User
+from Rag import vector_store
+from Rag.chunker import Chunk_Txt
 
 
-class RagUserIsolationTests(unittest.TestCase):
+class PgvectorChunkIsolationTests(unittest.TestCase):
     def setUp(self):
-        rag.Assess_document_evidence = generator_stub.Assess_document_evidence
-        rag.Generate_claims = generator_stub.Generate_claims
-        rag.Verify_document_claims = generator_stub.Verify_document_claims
-        self.temp_dir = TemporaryDirectory()
-        root = Path(self.temp_dir.name)
-        self.documents_root_patch = patch.object(
-            user_storage, "DOCUMENTS_ROOT", root / "documents"
-        )
-        self.storage_root_patch = patch.object(
-            user_storage, "STORAGE_ROOT", root / "storage"
-        )
-        self.documents_root_patch.start()
-        self.storage_root_patch.start()
-        self.addCleanup(self.documents_root_patch.stop)
-        self.addCleanup(self.storage_root_patch.stop)
-        self.addCleanup(self.temp_dir.cleanup)
-        self.cache_lookup_patch = patch.object(
-            rag.answer_cache, "Lookup", return_value=(None, "miss", 0.0, 0)
-        )
-        self.cache_lookup_patch.start()
-        self.addCleanup(self.cache_lookup_patch.stop)
-        self.cache_store_patch = patch.object(rag.answer_cache, "Store", return_value=False)
-        self.cache_store_patch.start()
-        self.addCleanup(self.cache_store_patch.stop)
-        self.ready_documents = {}
-        self.ready_documents_patch = patch.object(
-            rag, "get_ready_document_hashes",
-            side_effect=lambda user_id: self.ready_documents.get(user_id, {}),
-        )
-        self.ready_documents_patch.start()
-        self.addCleanup(self.ready_documents_patch.stop)
-        self.no_documents_patch = patch.object(rag, "_user_has_documents", return_value=False)
-        self.no_documents_patch.start()
-        self.addCleanup(self.no_documents_patch.stop)
-
-    def _write_document(self, user_id, filename, contents):
-        documents_dir, _ = user_storage.Get_user_paths(user_id)
-        documents_dir.mkdir(parents=True, exist_ok=True)
-        (documents_dir / filename).write_bytes(contents)
-        self.ready_documents.setdefault(user_id, {})[filename] = hashlib.sha256(contents).hexdigest()
-
-    def _mock_process(self, path, user_id):
-        user_name = path.parent.name
-        vector = np.array([[1.0, 0.0]], dtype="float32") if user_name == "user_101" else np.array([[0.0, 1.0]], dtype="float32")
-        return ([{
-            "source": path.name,
-            "document_id": path.name,
-            "user_id": user_id,
-            "page": 1,
-            "text": user_name,
-        }], vector)
+        self.engine = create_engine("sqlite://")
+        @event.listens_for(self.engine, "connect")
+        def _foreign_keys(connection, _record):
+            connection.execute("PRAGMA foreign_keys=ON")
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        self.session_patch = patch.object(vector_store, "SessionLocal", self.Session)
+        self.session_patch.start()
+        self.addCleanup(self.session_patch.stop)
+        self.addCleanup(self.engine.dispose)
+        self.config = type("Config", (), {
+            "provider": "gemini", "model": "gemini-embedding-001", "dimensions": 768,
+            "document_task_type": "RETRIEVAL_DOCUMENT", "query_task_type": "RETRIEVAL_QUERY",
+            "normalization": "l2_unit", "distance_metric": "l2", "batch_size": 100,
+            "as_dict": lambda self: {"provider": self.provider, "model": self.model,
+                                     "dimensions": self.dimensions, "document_task_type": self.document_task_type},
+        })()
+        self.config_patch = patch.object(vector_store, "get_embedding_configuration", return_value=self.config)
+        self.config_patch.start()
+        self.addCleanup(self.config_patch.stop)
+        self.threshold_patch = patch.object(vector_store, "Get_calibrated_relevance_threshold", return_value=0.5)
+        self.threshold_patch.start()
+        self.addCleanup(self.threshold_patch.stop)
+        with self.Session() as session:
+            session.add_all([
+                User(ID=101, Name="A", Email="a@example.test", Password="hash"),
+                User(ID=202, Name="B", Email="b@example.test", Password="hash"),
+            ])
+            session.commit()
 
     @staticmethod
-    def _write_text_pdf(path, text):
-        writer = PdfWriter()
-        page = writer.add_blank_page(width=300, height=100)
-        font = DictionaryObject({
-            NameObject("/Type"): NameObject("/Font"),
-            NameObject("/Subtype"): NameObject("/Type1"),
-            NameObject("/BaseFont"): NameObject("/Helvetica"),
-        })
-        page[NameObject("/Resources")] = DictionaryObject({
-            NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})
-        })
-        stream = DecodedStreamObject()
-        stream.set_data(f"BT /F1 12 Tf 10 40 Td ({text}) Tj ET".encode("ascii"))
-        page[NameObject("/Contents")] = writer._add_object(stream)
-        buffer = BytesIO()
-        writer.write(buffer)
-        path.write_bytes(buffer.getvalue())
+    def _unit_vector(index=0):
+        value = [0.0] * 768
+        value[index] = 1.0
+        return value
 
-    def test_storage_paths_require_positive_integer_database_identity(self):
-        for invalid_id in (None, True, 0, -1, "../user_8", "7"):
-            with self.subTest(user_id=invalid_id):
-                with self.assertRaises(ValueError):
-                    user_storage.Get_user_paths(invalid_id)
+    def _document(self, session, user_id, name, status="READY"):
+        document = Document(user_id=user_id, filename=name, storage_filename=f"{user_id}-{name}",
+                            file_size_bytes=10, page_count=1, sha256="a" * 64, status=status)
+        session.add(document)
+        session.flush()
+        return document
 
-        documents_dir, storage_dir = user_storage.Get_user_paths(101)
-        self.assertEqual(documents_dir.name, "user_101")
-        self.assertEqual(storage_dir.name, "user_101")
-        self.assertEqual(documents_dir.parent, user_storage.DOCUMENTS_ROOT)
-        self.assertEqual(storage_dir.parent, user_storage.STORAGE_ROOT)
-
-    def test_users_can_retrieve_only_their_own_documents(self):
-        self._write_document(101, "same-name.pdf", b"user 101 document")
-        self._write_document(202, "same-name.PDF", b"user 202 document")
-        with patch.object(ingest, "Process_document", side_effect=self._mock_process):
-            ingest.Build_rag(101)
-            ingest.Build_rag(202)
-
-        rag.model = types.SimpleNamespace(
-            encode=lambda query: np.array([1.0, 0.0]) if "A" in query else np.array([0.0, 1.0])
+    def _chunk(self, session, user_id, document, text, index=0, vector=None):
+        row = DocumentChunk(
+            user_id=user_id, document_id=document.id, chunk_index=index, text=text,
+            page_number=1, embedding=vector or self._unit_vector(),
+            embedding_provider="gemini", embedding_model="gemini-embedding-001",
+            embedding_dimensions=768, embedding_task_type="RETRIEVAL_DOCUMENT",
         )
-        rag.Generate_claims = Mock(return_value={
-            "claims": [{"claim_id": "C1", "text": "Answer", "citation_ids": ["R1"]}],
-        })
-        answer_a, sources_a = rag.Ask_question("question for A", 101)
-        answer_b, sources_b = rag.Ask_question("question for B", 202)
+        session.add(row)
+        return row
 
-        self.assertEqual(answer_a, "Answer")
-        self.assertEqual(answer_b, "Answer")
-        self.assertEqual([source["text"] for source in sources_a], ["user_101"])
-        self.assertEqual([source["text"] for source in sources_b], ["user_202"])
-        self.assertEqual(sources_a[0]["source"], "same-name.pdf")
-        self.assertEqual(sources_b[0]["source"], "same-name.PDF")
+    def test_embedding_validation_rejects_wrong_dimensions_nan_and_non_unit_vectors(self):
+        with self.assertRaises(ValueError):
+            vector_store.validate_chunk_embedding([1.0, 0.0])
+        with self.assertRaises(ValueError):
+            vector_store.validate_chunk_embedding([float("nan")] + [0.0] * 767)
+        with self.assertRaises(ValueError):
+            vector_store.validate_chunk_embedding([2.0] + [0.0] * 767)
+        self.assertTrue(math.isclose(sum(x*x for x in vector_store.validate_chunk_embedding(self._unit_vector())), 1.0))
 
-    def test_pdf_text_survives_extraction_chunking_indexing_and_grounded_answer(self):
-        documents_dir, _ = user_storage.Get_user_paths(101)
-        documents_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = documents_dir / "opencv-notes.pdf"
-        pdf_text = "Adaptive thresholding computes local pixel cutoffs and helps when illumination varies across an image."
-        self._write_text_pdf(pdf_path, pdf_text)
-        self.ready_documents.setdefault(101, {})[pdf_path.name] = hashlib.sha256(
-            pdf_path.read_bytes()
-        ).hexdigest()
-        rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
-        with patch.object(
-            ingest,
-            "Create_embeddings",
-            side_effect=lambda chunks: np.array([[0.1, 0.0] for _ in chunks], dtype="float32"),
-        ):
-            ingest.Build_rag(101, eligible_storage_filenames={pdf_path.name})
+    def test_chunk_insert_uses_document_task_type_and_unique_positions(self):
+        document_chunks = [{"text": "first", "page": 2}, {"text": "second", "page": 2}]
+        vectors = [self._unit_vector(), self._unit_vector(1)]
+        with self.Session() as session:
+            document = self._document(session, 101, "notes.pdf", "PROCESSING")
+            vector_store.Insert_document_chunks(session, document, document_chunks, vectors)
+            document.status = "READY"
+            session.commit()
+            rows = session.query(DocumentChunk).filter_by(document_id=document.id).order_by(DocumentChunk.chunk_index).all()
+            self.assertEqual([row.chunk_index for row in rows], [0, 1])
+            self.assertEqual([row.embedding_task_type for row in rows], ["RETRIEVAL_DOCUMENT"] * 2)
+            self.assertEqual([row.embedding_dimensions for row in rows], [768, 768])
+            self.assertEqual([row.page_number for row in rows], [2, 2])
 
-        loaded_index, loaded_chunks = vector_store.Load_vector_store(101)
-        self.assertEqual(loaded_index.ntotal, 1)
-        self.assertIn("local pixel cutoffs", loaded_chunks[0]["text"])
-        self.assertEqual(loaded_chunks[0]["page"], 1)
-        self.assertEqual(loaded_chunks[0]["user_id"], 101)
+    def test_chunk_insertion_rejects_mismatched_vector_count(self):
+        with self.Session() as session:
+            document = self._document(session, 101, "notes.pdf", "PROCESSING")
+            with self.assertRaises(ValueError):
+                vector_store.Insert_document_chunks(session, document, [{"text": "one"}], [])
 
-        rag.Assess_document_evidence = Mock(return_value={
-            "coverage_status": "COMPLETE",
-            "required_facts": [{
-                "fact_id": "F1", "description": "Local thresholds handle uneven illumination",
-                "reference_ids": ["R1"],
-            }],
-            "missing_facts": [],
-            "relationships": [],
-        })
-        rag.Generate_claims = Mock(return_value={"claims": [{
-            "claim_id": "C1",
-            "text": "Adaptive thresholding uses local cutoffs when illumination varies.",
-            "citation_ids": ["R1"],
-        }]})
-        rag.Verify_document_claims = Mock(return_value={
-            "claim_results": [{
-                "claim_id": "C1", "classification": "SUPPORTED",
-                "citation_ids": ["R1"], "qualified_text": None,
-            }],
-            "relationships": [],
-        })
-        result = rag.Ask_question("How does adaptive thresholding help with uneven lighting?", 101)
+    def test_cache_provenance_loader_is_scoped_to_owner_and_ready_documents(self):
+        with self.Session() as session:
+            ready = self._document(session, 101, "ready.pdf")
+            processing = self._document(session, 101, "processing.pdf", "PROCESSING")
+            other = self._document(session, 202, "private.pdf")
+            self._chunk(session, 101, ready, "owner text")
+            self._chunk(session, 101, processing, "not ready")
+            self._chunk(session, 202, other, "private text")
+            session.commit()
+        chunks = vector_store.Load_ready_chunk_metadata(101)
+        self.assertEqual([chunk["text"] for chunk in chunks], ["owner text"])
+        self.assertEqual(chunks[0]["user_id"], 101)
 
-        self.assertEqual(
-            result.answer_mode, rag.DOCUMENT_SUPPORTED,
-            f"{result.fallback_reason}: {result.message}",
-        )
-        self.assertEqual(result.sources[0]["source"], "opencv-notes.pdf")
-        self.assertEqual(result.sources[0]["page"], 1)
-        self.assertIn("local pixel cutoffs", result.sources[0]["text"])
+    def test_composite_foreign_key_prevents_chunk_tenant_mismatch(self):
+        with self.Session() as session:
+            document = self._document(session, 101, "owner.pdf")
+            session.commit()
+            session.add(DocumentChunk(
+                user_id=202, document_id=document.id, chunk_index=0, text="forged",
+                embedding=self._unit_vector(), embedding_provider="gemini",
+                embedding_model="gemini-embedding-001", embedding_dimensions=768,
+                embedding_task_type="RETRIEVAL_DOCUMENT",
+            ))
+            with self.assertRaises(Exception):
+                session.commit()
 
-    def test_empty_knowledge_base_returns_empty_sources_without_loading_other_users(self):
-        result = rag.Ask_question("question", 303)
+    def test_duplicate_chunk_position_is_rejected(self):
+        with self.Session() as session:
+            document = self._document(session, 101, "notes.pdf")
+            self._chunk(session, 101, document, "one")
+            self._chunk(session, 101, document, "duplicate")
+            with self.assertRaises(Exception):
+                session.commit()
 
-        self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
-        self.assertEqual(result.answer, rag.NO_DOCUMENTS_MESSAGE)
-        self.assertEqual(result.sources, [])
+    def test_empty_ready_collection_does_not_call_embedding_provider(self):
+        embedder = Mock()
+        result = vector_store.Retrieve("query", embedder, 101)
+        self.assertEqual(result.chunks, ())
+        embedder.embed_query.assert_not_called()
 
-    def test_index_and_chunks_reload_from_the_same_users_directory(self):
-        self._write_document(101, "a.pdf", b"owner A")
-        self._write_document(202, "b.pdf", b"owner B")
-        with patch.object(ingest, "Process_document", side_effect=self._mock_process):
-            ingest.Build_rag(101)
-            ingest.Build_rag(202)
+    def test_mismatched_stored_embedding_is_rejected_before_provider_call(self):
+        with self.Session() as session:
+            document = self._document(session, 101, "old-space.pdf")
+            row = self._chunk(session, 101, document, "old vector")
+            row.embedding_provider = "minilm"
+            session.commit()
+        embedder = Mock()
+        with self.assertRaises(vector_store.IncompatibleVectorStoreError):
+            vector_store.Retrieve("query", embedder, 101)
+        embedder.embed_query.assert_not_called()
 
-        index_a, chunks_a = vector_store.Load_vector_store(101)
-        index_b, chunks_b = vector_store.Load_vector_store(202)
-        self.assertEqual(index_a.ntotal, 1)
-        self.assertEqual(index_b.ntotal, 1)
-        self.assertEqual(chunks_a[0]["text"], "user_101")
-        self.assertEqual(chunks_b[0]["text"], "user_202")
+    def test_document_delete_cascades_chunks(self):
+        with self.Session() as session:
+            document = self._document(session, 101, "notes.pdf")
+            self._chunk(session, 101, document, "chunk")
+            session.commit()
+            document_id = document.id
+            session.delete(document)
+            session.commit()
+            self.assertEqual(session.query(DocumentChunk).filter_by(document_id=document_id).count(), 0)
 
-    def test_catalog_eligibility_excludes_failed_or_deleting_pdfs_from_rebuild(self):
-        self._write_document(101, "ready.pdf", b"ready document")
-        documents_dir, _ = user_storage.Get_user_paths(101)
-        (documents_dir / "failed.pdf").write_bytes(b"failed document")
-        (documents_dir / "deleting.pdf").write_bytes(b"deleting document")
-
-        with patch.object(ingest, "Process_document", side_effect=self._mock_process) as process:
-            ingest.Build_rag(101, eligible_storage_filenames={"ready.pdf"})
-
-        process.assert_called_once()
-        self.assertEqual(process.call_args.args[0].name, "ready.pdf")
-        _, chunks = vector_store.Load_vector_store(101)
-        self.assertEqual({chunk["document_id"] for chunk in chunks}, {"ready.pdf"})
-
-    def test_ingestion_uses_catalog_hashes_and_updates_new_documents_incrementally(self):
-        self._write_document(101, "first.pdf", b"first version")
-        documents_dir, _ = user_storage.Get_user_paths(101)
-        # A malformed legacy manifest must not affect the runtime catalog path.
-        storage_dir = user_storage.Get_user_paths(101)[1]
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        (storage_dir / "documents.json").write_text("not json", encoding="utf-8")
-        catalog = dict(self.ready_documents[101])
-
-        with patch.object(ingest, "Process_document", side_effect=self._mock_process) as process:
-            ingest.Build_rag(101, set(catalog), catalog)
-            self.assertEqual(process.call_count, 1)
-            _, first_chunks = vector_store.Load_vector_store(101)
-            self.assertEqual(first_chunks[0]["document_sha256"], catalog["first.pdf"])
-
-            self._write_document(101, "second.pdf", b"second version")
-            catalog = dict(self.ready_documents[101])
-            process.reset_mock()
-            ingest.Build_rag(101, set(catalog), catalog)
-            process.assert_called_once()
-            self.assertEqual(process.call_args.args[0].name, "second.pdf")
-
-            changed = b"first changed"
-            (documents_dir / "first.pdf").write_bytes(changed)
-            self.ready_documents[101]["first.pdf"] = hashlib.sha256(changed).hexdigest()
-            catalog = dict(self.ready_documents[101])
-            process.reset_mock()
-            ingest.Build_rag(101, set(catalog), catalog)
-            self.assertEqual(
-                {call.args[0].name for call in process.call_args_list},
-                {"first.pdf", "second.pdf"},
-            )
-
-        _, chunks = vector_store.Load_vector_store(101)
-        self.assertEqual({chunk["document_id"] for chunk in chunks}, {"first.pdf", "second.pdf"})
-        self.assertEqual(
-            {chunk["document_id"]: chunk["document_sha256"] for chunk in chunks},
-            catalog,
-        )
-
-    def test_concurrent_ingestion_writes_independent_user_indexes(self):
-        self._write_document(101, "a.pdf", b"owner A")
-        self._write_document(202, "b.pdf", b"owner B")
-        with patch.object(ingest, "Process_document", side_effect=self._mock_process):
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [executor.submit(ingest.Build_rag, user_id) for user_id in (101, 202)]
-                [future.result(timeout=5) for future in futures]
-
-        _, chunks_a = vector_store.Load_vector_store(101)
-        _, chunks_b = vector_store.Load_vector_store(202)
-        self.assertEqual(chunks_a[0]["text"], "user_101")
-        self.assertEqual(chunks_b[0]["text"], "user_202")
-
-    def test_metadata_is_scoped_by_user_even_for_identical_filenames(self):
-        self._write_document(101, "notes.pdf", b"A version")
-        self._write_document(202, "notes.pdf", b"B version")
-
-        status_a, hash_a = document_tracker.Document_status(
-            user_storage.Get_user_paths(101)[0] / "notes.pdf", 101
-        )
-        status_b, hash_b = document_tracker.Document_status(
-            user_storage.Get_user_paths(202)[0] / "notes.pdf", 202
-        )
-        self.assertEqual((status_a, status_b), ("new", "new"))
-        self.assertNotEqual(hash_a, hash_b)
-
-        document_tracker.Save_document_metadata({"notes.pdf": hash_a}, 101)
-        self.assertEqual(document_tracker.Load_document_metadata(202), {})
-
-    def test_retrieval_handles_empty_one_result_and_invalid_faiss_indices(self):
-        self.assertEqual(vector_store.Search(None, [0.0, 1.0], k=5)[1].size, 0)
-        empty_index = vector_store.faiss.IndexFlatL2(2)
-        self.assertEqual(vector_store.Create_vector_store([]), None)
-        self.assertEqual(vector_store.Search(empty_index, [0.0, 1.0], k=5)[1].size, 0)
-        empty_result = vector_store.Retrieve("q", empty_index, [], Mock(), 101, k=5)
-        self.assertEqual(empty_result.chunks, ())
-        self.assertFalse(empty_result.evidence_sufficient)
-        self.assertEqual(vector_store.Retrieve("q", None, [], Mock(), 101, k=5).chunks, ())
-
-        index = vector_store.Create_vector_store(np.array([[1.0, 0.0]], dtype="float32"))
-        model = types.SimpleNamespace(encode=lambda _query: np.array([1.0, 0.0]))
-        chunks = [{"page": 1, "text": "only result", "source": "one.pdf", "user_id": 101}]
-        results = vector_store.Retrieve("q", index, chunks, model, 101, k=5)
-        self.assertEqual(len(results.chunks), 1)
-        self.assertEqual(results.chunks[0].source, "one.pdf")
-        self.assertTrue(results.evidence_sufficient)
-        self.assertEqual(results.chunks[0].page, 1)
-        self.assertEqual(results.chunks[0].user_id, 101)
-        self.assertEqual(results.chunks[0].distance, 0.0)
-        self.assertEqual(results.sources, [{"source": "one.pdf", "page": 1, "text": "only result"}])
-
-        with patch.object(
-            vector_store,
-            "Search",
-            return_value=(np.array([0.0]), np.array([-1])),
-        ):
-            result = vector_store.Retrieve("q", index, chunks, model, 101)
-            self.assertEqual(result.chunks, ())
-            self.assertFalse(result.evidence_sufficient)
-
-    def test_relevance_assessment_filters_irrelevant_and_keeps_mixed_results_internal(self):
-        vectors = np.array([[0.1, 0.0], [5.0, 5.0]], dtype="float32")
-        index = vector_store.Create_vector_store(vectors)
-        model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
-        chunks = [
-            {"page": 2, "text": "relevant text", "source": "a.pdf", "document_id": "doc-a", "user_id": 101},
-            {"page": 9, "text": "unrelated text", "source": "b.pdf", "document_id": "doc-b", "user_id": 101},
-        ]
-
-        result = vector_store.Retrieve("q", index, chunks, model, 101)
-
+    def test_retrieval_result_keeps_provenance_and_applies_l2_threshold(self):
+        result = vector_store.Make_retrieval_result("query", 101, [{
+            "source": "notes.pdf", "document_id": "doc", "page": 4,
+            "text": "passage", "user_id": 101, "distance": 0.2,
+        }], 0.5)
         self.assertTrue(result.evidence_sufficient)
-        self.assertEqual([chunk.relevant for chunk in result.chunks], [True, False])
-        self.assertAlmostEqual(result.chunks[0].distance, 0.01, places=6)
-        self.assertEqual(result.chunks[1].distance, 50.0)
-        self.assertEqual([chunk.document_id for chunk in result.relevant_chunks], ["doc-a"])
-        self.assertEqual(result.relevant_chunks[0].metadata["user_id"], 101)
-        self.assertEqual(result.relevant_chunks[0].page, 2)
-        self.assertEqual(result.sources, [{"source": "a.pdf", "page": 2, "text": "relevant text"}])
-
-    def test_irrelevant_and_multiple_document_results_are_assessed(self):
-        model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
-        irrelevant_index = vector_store.Create_vector_store(np.array([[8.0, 8.0]], dtype="float32"))
-        irrelevant = vector_store.Retrieve(
-            "unrelated question",
-            irrelevant_index,
-            [{"page": 1, "text": "unrelated", "source": "unrelated.pdf", "user_id": 101}],
-            model,
-            101,
-        )
-        self.assertFalse(irrelevant.evidence_sufficient)
-        self.assertEqual(irrelevant.sources, [])
-
-        multi_index = vector_store.Create_vector_store(
-            np.array([[0.1, 0.0], [0.2, 0.0]], dtype="float32")
-        )
-        multi = vector_store.Retrieve(
-            "question requiring two documents",
-            multi_index,
-            [
-                {"page": 1, "text": "part one", "source": "first.pdf", "user_id": 101},
-                {"page": 4, "text": "part two", "source": "second.pdf", "user_id": 101},
-            ],
-            model,
-            101,
-        )
-        self.assertTrue(multi.evidence_sufficient)
-        self.assertEqual([chunk.source for chunk in multi.relevant_chunks], ["first.pdf", "second.pdf"])
-        self.assertEqual([chunk.page for chunk in multi.relevant_chunks], [1, 4])
-
-    def test_retrieval_rejects_chunks_from_a_different_user(self):
-        index = vector_store.Create_vector_store(np.array([[0.0, 0.0]], dtype="float32"))
-        model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
+        self.assertEqual(result.sources, [{"source": "notes.pdf", "page": 4, "text": "passage"}])
         with self.assertRaises(ValueError):
-            vector_store.Retrieve(
-                "q", index,
-                [{"page": 1, "text": "foreign", "source": "foreign.pdf", "user_id": 202}],
-                model, 101,
-            )
+            vector_store.Make_retrieval_result("query", 101, [{
+                "source": "private.pdf", "text": "private", "user_id": 202, "distance": 0.1,
+            }], 0.5)
 
-    def test_missing_store_is_empty_but_partial_store_fails_closed(self):
-        self.assertEqual(vector_store.Load_vector_store(404), (None, []))
-
-        _, storage_dir = user_storage.Get_user_paths(404)
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        (storage_dir / "chunks.pkl").write_bytes(b"partial")
-        with self.assertRaises(FileNotFoundError):
-            vector_store.Load_vector_store(404)
-
-    def test_corrupt_index_and_chunk_files_fail_closed(self):
-        _, storage_dir = user_storage.Get_user_paths(405)
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        (storage_dir / "index.faiss").write_bytes(b"not a FAISS index")
-        (storage_dir / "chunks.pkl").write_bytes(b"not a pickle")
-        with self.assertRaises(ValueError):
-            vector_store.Load_vector_store(405)
-
-        _, storage_dir = user_storage.Get_user_paths(406)
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        valid_index = vector_store.Create_vector_store(np.array([[0.0, 0.0]], dtype="float32"))
-        vector_store.faiss.write_index(valid_index, str(storage_dir / "index.faiss"))
-        (storage_dir / "chunks.pkl").write_bytes(b"not a pickle")
-        with self.assertRaises(ValueError):
-            vector_store.Load_vector_store(406)
-
-    def test_vector_store_versions_are_json_and_immutable(self):
-        user_id = 407
-        chunks = [{"page": 1, "text": "first", "source": "a.pdf", "user_id": user_id}]
-        index = vector_store.Create_vector_store(np.array([[0.0, 0.0]], dtype="float32"))
-        vector_store.Save_vector_store(index, chunks, user_id)
-        _, storage_dir = user_storage.Get_user_paths(user_id)
-        manifest = json.loads((storage_dir / "manifest.json").read_text(encoding="utf-8"))
-        first_version = manifest["active_version"]
-        first_chunks = storage_dir / "versions" / first_version / "chunks.json"
-        self.assertEqual(json.loads(first_chunks.read_text(encoding="utf-8")), chunks)
-        self.assertFalse((storage_dir / "chunks.pkl").exists())
-
-        changed = [{"page": 1, "text": "second", "source": "a.pdf", "user_id": user_id}]
-        vector_store.Save_vector_store(index, changed, user_id)
-        active = json.loads((storage_dir / "manifest.json").read_text(encoding="utf-8"))["active_version"]
-        self.assertNotEqual(active, first_version)
-        self.assertTrue(first_chunks.exists())
-        self.assertEqual(vector_store.Load_vector_store(user_id)[1][0]["text"], "second")
-
-    def test_evaluation_dataset_and_calibrated_cutoff_are_explicit(self):
-        fixture = Path(__file__).parent / "fixtures" / "rag_evaluation.json"
-        dataset = json.loads(fixture.read_text(encoding="utf-8"))
-        self.assertEqual(len(dataset["cases"]), 40)
-        self.assertEqual(sum(case["split"] == "calibration" for case in dataset["cases"]), 28)
-        self.assertEqual(sum(case["split"] == "validation" for case in dataset["cases"]), 12)
-        categories = {case["category"] for case in dataset["cases"]}
-        self.assertTrue({"answerable", "unanswerable", "irrelevant", "multi_document", "ambiguous", "conflicting", "empty_knowledge_base"}.issubset(categories))
-        for case in dataset["cases"]:
-            self.assertIn("expected_answer_points", case)
-            self.assertIn("evidence_sufficient", case)
-            self.assertIn("expected_supporting_passage_ids", case)
-            self.assertIn("expected_answer_mode", case)
-
-        threshold = relevance.Get_calibrated_relevance_threshold()
-        self.assertGreater(threshold, 0)
-        self.assertAlmostEqual(threshold, 0.942206859588623)
-
-    def test_threshold_calibration_uses_labeled_distance_examples(self):
-        threshold, metrics = relevance.Calibrate_distance_threshold([
-            (0.1, True), (0.2, True), (0.5, False), (0.8, False)
-        ])
-        self.assertEqual(threshold, 0.2)
-        self.assertEqual(metrics["precision"], 1.0)
-        self.assertEqual(metrics["recall"], 1.0)
-
-    def test_legacy_shared_paths_are_not_part_of_any_user_store(self):
-        documents_dir, storage_dir = user_storage.Get_user_paths(101)
-        self.assertEqual(documents_dir.name, "user_101")
-        self.assertEqual(storage_dir.name, "user_101")
-        self.assertEqual(documents_dir.parent, user_storage.DOCUMENTS_ROOT)
-        self.assertEqual(storage_dir.parent, user_storage.STORAGE_ROOT)
-        self.assertNotEqual(documents_dir, Path("Data/Documents"))
-        self.assertNotEqual(storage_dir, Path("Storage"))
-
-    def test_insufficient_evidence_does_not_call_answer_generator(self):
-        index = vector_store.Create_vector_store(np.array([[8.0, 8.0]], dtype="float32"))
-        chunks = [{
-            "page": 1,
-            "text": "Unrelated passage",
-            "source": "unrelated.pdf",
-            "document_id": "unrelated-doc",
-            "user_id": 101,
-        }]
-        self.ready_documents.setdefault(101, {})["unrelated-doc"] = hashlib.sha256(
-            b"unrelated"
-        ).hexdigest()
-        vector_store.Save_vector_store(index, chunks, 101)
-        rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
-        rag.Assess_document_evidence = Mock(return_value={
-            "coverage_status": "INSUFFICIENT",
-            "required_facts": [],
-            "missing_facts": ["The passage does not answer the question"],
-            "relationships": [],
-        })
-        generator = Mock(return_value={
-            "claims": [{"claim_id": "C1", "text": "Should not be generated", "citation_ids": ["R1"]}],
-        })
-        rag.Generate_claims = generator
-        result = rag.Ask_question("unrelated question", 101)
-
-        self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
-        self.assertEqual(result.answer, rag.NO_INFORMATION_MESSAGE)
-        self.assertEqual(result.sources, [])
-        generator.assert_not_called()
+    def test_local_chunker_keeps_page_provenance_and_configured_character_limit(self):
+        text = "word " * 500
+        chunks = Chunk_Txt([{"page": 3, "text": text}])
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk["text"]) <= 1000 for chunk in chunks))
+        self.assertTrue(all(chunk["page"] == 3 for chunk in chunks))
+        self.assertGreater(len(set(chunks[0]["text"].split()) & set(chunks[1]["text"].split())), 0)
 
 
 if __name__ == "__main__":

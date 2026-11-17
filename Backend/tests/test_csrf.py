@@ -42,7 +42,7 @@ rag_stub = types.ModuleType("Rag.rag")
 rag_stub.Ask_question = Mock()
 rag_stub.RAGProcessingError = type("RAGProcessingError", (RuntimeError,), {})
 ingest_stub = types.ModuleType("Rag.ingest")
-ingest_stub.Build_rag = Mock()
+ingest_stub.Process_document = Mock(return_value=([{"text": "test passage", "page": 1}], [[1.0] + [0.0] * 767]))
 sys.modules["Rag.rag"] = rag_stub
 sys.modules["Rag.ingest"] = ingest_stub
 from App.Routers import auth, chat, documents, signup
@@ -105,6 +105,12 @@ class FakeDB:
         ]
         return FakeResult(self.user, rows)
 
+    def scalar(self, *_args):
+        # The upload catalog queries first check duplicate display names and then
+        # sum the authenticated user's catalog file-size values.
+        self.scalar_count = getattr(self, "scalar_count", 0) + 1
+        return None if self.scalar_count % 2 else 0
+
     def scalars(self, *_args):
         return FakeScalarList([
             item.storage_filename for item in self.documents
@@ -116,6 +122,10 @@ class FakeDB:
         if hasattr(item, "storage_filename"):
             item.id = item.id or str(uuid.uuid4())
             self.documents.append(item)
+
+    def add_all(self, items):
+        for item in items:
+            self.add(item)
 
     def commit(self):
         self.commit_count += 1
@@ -169,16 +179,9 @@ class CsrfProtectionTests(unittest.TestCase):
         self.client = TestClient(self.app)
 
         self.temp_dir = TemporaryDirectory(dir=os.getcwd())
-        self.user_paths_patch = patch.object(
-            documents,
-            "Get_user_paths",
-            side_effect=lambda user_id: (
-                Path(self.temp_dir.name) / f"documents-user-{user_id}",
-                Path(self.temp_dir.name) / f"storage-user-{user_id}",
-            ),
-        )
-        self.user_paths_patch.start()
-        self.addCleanup(self.user_paths_patch.stop)
+        self.temp_root_patch = patch.object(documents.tempfile, "gettempdir", return_value=self.temp_dir.name)
+        self.temp_root_patch.start()
+        self.addCleanup(self.temp_root_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
         self.ask_question_patch = patch.object(chat, "Ask_question", return_value=types.SimpleNamespace(
             answer="You haven't uploaded any documents yet. Upload a document to start asking questions.",
@@ -190,15 +193,15 @@ class CsrfProtectionTests(unittest.TestCase):
             claims=[],
             sources=[],
         ))
-        self.build_rag_patch = patch.object(documents, "Build_rag")
+        self.process_document_patch = patch.object(documents, "Process_document", return_value=([{"text": "test passage", "page": 1}], [[1.0] + [0.0] * 767]))
         self.password_patch = patch.object(auth, "verify_password", return_value=True)
         self.hash_patch = patch.object(signup, "hashed_password", return_value="hashed-password")
         self.ask_question = self.ask_question_patch.start()
-        self.build_rag = self.build_rag_patch.start()
+        self.process_document = self.process_document_patch.start()
         self.verify_password = self.password_patch.start()
         self.hash_password = self.hash_patch.start()
         self.addCleanup(self.ask_question_patch.stop)
-        self.addCleanup(self.build_rag_patch.stop)
+        self.addCleanup(self.process_document_patch.stop)
         self.addCleanup(self.password_patch.stop)
         self.addCleanup(self.hash_patch.stop)
         self.addCleanup(self.app.dependency_overrides.clear)
@@ -242,7 +245,7 @@ class CsrfProtectionTests(unittest.TestCase):
             headers=self._origin_headers(),
         )
         self.assertEqual(response.status_code, 403)
-        self.build_rag.assert_not_called()
+        self.process_document.assert_not_called()
 
     def test_invalid_signed_csrf_token_is_rejected_before_chat_logic(self):
         self._login()
@@ -273,9 +276,15 @@ class CsrfProtectionTests(unittest.TestCase):
 
     def test_csrf_token_is_bound_to_the_current_jwt_cookie(self):
         token, _ = self._login()
+        access_cookie = next(
+            cookie for cookie in self.client.cookies.jar
+            if cookie.name == "access_token"
+        )
         self.client.cookies.set(
             "access_token",
             oauth2.create_access_token(str(self.other_user.ID)),
+            domain=access_cookie.domain,
+            path=access_cookie.path,
         )
         response = self.client.post(
             "/chat/query",
@@ -335,9 +344,7 @@ class CsrfProtectionTests(unittest.TestCase):
             headers=self._origin_headers(token),
         )
         self.assertEqual(upload_response.status_code, 201)
-        self.build_rag.assert_called_once()
-        self.assertEqual(self.build_rag.call_args.args, (self.user.ID,))
-        self.assertEqual(len(self.build_rag.call_args.kwargs["eligible_storage_filenames"]), 1)
+        self.process_document.assert_called_once()
 
     def test_safe_get_does_not_require_csrf_header_or_origin(self):
         self._login()

@@ -74,7 +74,18 @@ class DocumentMigrationTests(unittest.TestCase):
                     self.assertTrue(columns["page_count"]["nullable"])
                     self.assertEqual(
                         {tuple(item["column_names"]) for item in inspector.get_unique_constraints("documents")},
-                        {("user_id", "storage_filename")},
+                        {("user_id", "storage_filename"), ("id", "user_id")},
+                    )
+                    self.assertIn("document_chunks", inspector.get_table_names())
+                    chunk_columns = {item["name"] for item in inspector.get_columns("document_chunks")}
+                    self.assertEqual(chunk_columns, {
+                        "id", "user_id", "document_id", "chunk_index", "text", "page_number",
+                        "embedding", "embedding_provider", "embedding_model",
+                        "embedding_dimensions", "embedding_task_type", "created_at",
+                    })
+                    self.assertIn(
+                        ("document_id", "chunk_index"),
+                        {tuple(item["column_names"]) for item in inspector.get_unique_constraints("document_chunks")},
                     )
                     foreign_keys = inspector.get_foreign_keys("documents")
                     self.assertEqual(len(foreign_keys), 1)

@@ -16,11 +16,14 @@ for _module_name in (
 ):
     sys.modules.pop(_module_name, None)
 
-sentence_transformers_stub = types.ModuleType("sentence_transformers")
-sentence_transformers_stub.SentenceTransformer = lambda *_args, **_kwargs: Mock()
+
+
 with patch.dict(os.environ, {"LLM_API_KEY": "unit-test-key"}):
-    with patch.dict(sys.modules, {"sentence_transformers": sentence_transformers_stub}):
-        from Rag import answering, generator, rag, user_storage, vector_store
+    from Rag import answering, generator, rag, user_storage, vector_store
+    from App.base import Base
+    from App.models import User, Document, DocumentChunk
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.evaluate_rag_answers import evaluate as evaluate_answer_dataset
@@ -28,6 +31,17 @@ from scripts.evaluate_rag_answers import evaluate as evaluate_answer_dataset
 
 class EvidenceAwareAnswerTests(unittest.TestCase):
     def setUp(self):
+        self.calibration_patch = patch.object(vector_store, "Get_calibrated_relevance_threshold", return_value=1.0)
+        self.calibration_patch.start()
+        self.addCleanup(self.calibration_patch.stop)
+        self.rag_calibration_patch = patch.object(rag, "Get_calibrated_relevance_threshold", return_value=1.0)
+        self.rag_calibration_patch.start()
+        self.addCleanup(self.rag_calibration_patch.stop)
+        self.store_config_patch = patch.object(vector_store, "get_embedding_configuration", return_value=types.SimpleNamespace(
+            dimensions=2, distance_metric="squared_l2", as_dict=lambda: {"provider": "test", "dimensions": 2}
+        ))
+        self.store_config_patch.start()
+        self.addCleanup(self.store_config_patch.stop)
         self.temp_dir = TemporaryDirectory()
         root = Path(self.temp_dir.name)
         self.documents_patch = patch.object(user_storage, "DOCUMENTS_ROOT", root / "documents")
@@ -37,6 +51,13 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.addCleanup(self.documents_patch.stop)
         self.addCleanup(self.storage_patch.stop)
         self.addCleanup(self.temp_dir.cleanup)
+        self.engine = create_engine(f"sqlite:///{root / 'rag-test.sqlite'}")
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+        self.vector_session_patch = patch.object(vector_store, "SessionLocal", self.Session)
+        self.vector_session_patch.start()
+        self.addCleanup(self.vector_session_patch.stop)
+        self.addCleanup(self.engine.dispose)
         self.cache_lookup_patch = patch.object(
             rag.answer_cache, "Lookup", return_value=(None, "miss", 0.0, 0)
         )
@@ -45,7 +66,10 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.cache_store_patch = patch.object(rag.answer_cache, "Store", return_value=False)
         self.cache_store_patch.start()
         self.addCleanup(self.cache_store_patch.stop)
-        rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
+        rag.embedding_provider = types.SimpleNamespace(embed_query=lambda _query: np.array([1.0] + [0.0] * 767))
+        self.retrieve_patch = patch.object(rag, "Retrieve", side_effect=self._retrieve)
+        self.retrieve_patch.start()
+        self.addCleanup(self.retrieve_patch.stop)
         self.ready_document_hashes = {}
         self.ready_documents_patch = patch.object(
             rag, "get_ready_document_hashes",
@@ -119,8 +143,49 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
             for document_id, texts in grouped_text.items()
         }
         if vectors is None:
-            vectors = np.array([[0.1, 0.0] for _ in chunks], dtype="float32")
-        vector_store.Save_vector_store(vector_store.Create_vector_store(vectors), chunks, user_id)
+            vectors = np.array([[1.0, 0.0] for _ in chunks], dtype="float32")
+        with self.Session() as session:
+            if session.get(User, user_id) is None:
+                session.add(User(ID=user_id, Name="Test", Email=f"user-{user_id}@example.test", Password="hashed"))
+                session.flush()
+            for document_id in grouped_text:
+                if session.get(Document, document_id) is None:
+                    session.add(Document(
+                        id=document_id, user_id=user_id, filename=document_id,
+                        storage_filename=f"{document_id}-{user_id}", file_size_bytes=1,
+                        page_count=1, sha256=self.ready_document_hashes[user_id][document_id], status="READY",
+                    ))
+                    session.flush()
+                session.query(DocumentChunk).filter_by(document_id=document_id).delete()
+                for index, chunk in enumerate(item for item in chunks if item.get("document_id", item.get("source")) == document_id):
+                    vector = np.asarray(vectors[chunks.index(chunk)], dtype="float32").reshape(-1)
+                    vector = np.pad(vector, (0, max(0, 768 - vector.size)))[:768]
+                    norm = np.linalg.norm(vector)
+                    vector = vector / norm if norm else np.eye(1, 768, 0, dtype="float32")[0]
+                    session.add(DocumentChunk(
+                        user_id=user_id, document_id=document_id, chunk_index=index,
+                        text=chunk["text"], page_number=chunk.get("page"), embedding=vector.tolist(),
+                        embedding_provider="test", embedding_model="test-model", embedding_dimensions=768,
+                        embedding_task_type="RETRIEVAL_DOCUMENT",
+                    ))
+            session.commit()
+
+    def _retrieve(self, query, _embedder, user_id, k=5, allowed_document_ids=None):
+        with self.Session() as session:
+            rows = session.query(DocumentChunk, Document).join(
+                Document, Document.id == DocumentChunk.document_id
+            ).filter(DocumentChunk.user_id == user_id, Document.user_id == user_id,
+                     Document.status == "READY").all()
+        query_vector = np.asarray(rag.embedding_provider.embed_query(query), dtype="float32")
+        chunks = []
+        for row, document in rows:
+            if allowed_document_ids is not None and row.document_id not in allowed_document_ids:
+                continue
+            chunks.append({"source": document.filename, "document_id": row.document_id,
+                           "user_id": row.user_id, "page": row.page_number, "text": row.text,
+                           "distance": float(np.linalg.norm(np.asarray(row.embedding) - query_vector))})
+        chunks.sort(key=lambda item: (item["distance"], item["document_id"]))
+        return vector_store.Make_retrieval_result(query, user_id, chunks[:k], 1.0)
 
     @staticmethod
     def _chunk(source, text, page=1, user_id=None, document_id=None):
@@ -317,7 +382,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self._save_chunks(
             18,
             [self._chunk("vision.pdf", "Thresholding compares image pixels to a cutoff.")],
-            vectors=np.array([[2.0, 0.0]], dtype="float32"),
+            vectors=np.array([[1.0, 0.0]], dtype="float32"),
         )
 
         result = rag.Ask_question("What is image thresholding in OpenCV?", 18)
@@ -338,12 +403,12 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assess.return_value = self._assessment(
             facts=[{
                 "fact_id": "F1", "description": "Local thresholding handles uneven lighting",
-                "reference_ids": ["R2"],
+                "reference_ids": ["R1"],
             }]
         )
         self.generate_claims.return_value = {"claims": [{
             "claim_id": "C1", "text": "Adaptive thresholding uses local neighborhoods to handle uneven lighting.",
-            "citation_ids": ["R2"],
+            "citation_ids": ["R1"],
         }]}
         self.verify.return_value = self._supported_verification(
             "How does OpenCV thresholding handle uneven lighting?",
@@ -354,7 +419,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         result = rag.Ask_question("How does OpenCV thresholding handle uneven lighting?", 20)
 
         passages = self.assess.call_args.args[1]
-        self.assertEqual([passage["source"] for passage in passages], ["overview.pdf", "opencv.pdf"])
+        self.assertEqual([passage["source"] for passage in passages], ["opencv.pdf", "overview.pdf"])
         self.assertEqual(
             result.answer_mode, rag.DOCUMENT_SUPPORTED,
             f"{result.fallback_reason}: {result.message}",
@@ -362,11 +427,11 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assertEqual(result.sources[0]["source"], "opencv.pdf")
         self.assertEqual(result.sources[0]["page"], 3)
 
-    def test_far_irrelevant_candidate_is_still_rejected_by_evidence_assessment(self):
+    def test_candidate_outside_calibrated_distance_is_filtered_before_evidence_assessment(self):
         self._save_chunks(
             19,
             [self._chunk("vision.pdf", "Thresholding compares image pixels to a cutoff.")],
-            vectors=np.array([[2.0, 0.0]], dtype="float32"),
+            vectors=np.array([[0.0, 1.0]], dtype="float32"),
         )
         self.assess.return_value = self._assessment(
             status="INSUFFICIENT", facts=[], missing=["No requested facts are present"]
@@ -377,6 +442,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
         self.assertEqual(result.answer, rag.NO_INFORMATION_MESSAGE)
         self.assertEqual(result.sources, [])
+        self.assess.assert_not_called()
         self.generate_claims.assert_not_called()
 
     def test_invalid_generated_citation_is_classified_as_verification_failure(self):

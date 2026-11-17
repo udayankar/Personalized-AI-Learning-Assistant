@@ -26,7 +26,7 @@ class StubRAGProcessingError(RuntimeError):
     pass
 rag_stub.RAGProcessingError = StubRAGProcessingError
 ingest_stub = types.ModuleType("Rag.ingest")
-ingest_stub.Build_rag = Mock()
+ingest_stub.Process_document = Mock(return_value=([{"text": "test passage", "page": 1}], [[1.0] + [0.0] * 767]))
 with patch.dict(sys.modules, {"Rag.rag": rag_stub, "Rag.ingest": ingest_stub}):
     from App.Routers import auth, chat, documents
     from App import oauth2
@@ -113,6 +113,9 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.addCleanup(self.engine.dispose)
         self.client = TestClient(self.app)
         self.temp_dir = TemporaryDirectory(dir=os.getcwd())
+        self.temp_root_patch = patch.object(documents.tempfile, "gettempdir", return_value=self.temp_dir.name)
+        self.temp_root_patch.start()
+        self.addCleanup(self.temp_root_patch.stop)
         self.documents_root_patch = patch.object(
             user_storage, "DOCUMENTS_ROOT", Path(self.temp_dir.name) / "documents"
         )
@@ -135,11 +138,11 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
             claims=[],
             sources=[],
         ))
-        self.build_rag = patch.object(documents, "Build_rag")
+        self.process_document = patch.object(documents, "Process_document", return_value=([{"text": "test passage", "page": 1}], [[1.0] + [0.0] * 767]))
         self.ask_question_mock = self.ask_question.start()
-        self.build_rag_mock = self.build_rag.start()
+        self.process_document_mock = self.process_document.start()
         self.addCleanup(self.ask_question.stop)
-        self.addCleanup(self.build_rag.stop)
+        self.addCleanup(self.process_document.stop)
 
     def _token(self, payload=None, key=None):
         return jwt.encode(
@@ -189,7 +192,7 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
     def test_anonymous_upload_is_rejected_before_file_processing(self):
         response = self._upload()
         self.assertEqual(response.status_code, 401)
-        self.build_rag_mock.assert_not_called()
+        self.process_document_mock.assert_not_called()
         self.assertEqual(list(Path(self.temp_dir.name).iterdir()), [])
 
     def test_missing_malformed_invalid_signature_and_expired_tokens_are_rejected(self):
@@ -364,15 +367,8 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         response = self._upload(cookies=cookies, data={"user_id": "8"})
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["filename"], "notes.pdf")
-        stored_pdfs = list((Path(self.temp_dir.name) / "documents" / "user_7").glob("*.pdf"))
-        self.assertEqual(len(stored_pdfs), 1)
-        self.assertNotEqual(stored_pdfs[0].name, "notes.pdf")
-        self.build_rag_mock.assert_called_once()
-        self.assertEqual(self.build_rag_mock.call_args.args, (7,))
-        self.assertEqual(
-            self.build_rag_mock.call_args.kwargs["eligible_storage_filenames"],
-            {stored_pdfs[0].name},
-        )
+        self.process_document_mock.assert_called_once()
+        self.assertFalse(list(Path(self.temp_dir.name).glob("**/*.pdf")))
 
     def test_no_answer_preserves_intended_503(self):
         self.ask_question_mock.return_value = SimpleNamespace(answer="")
@@ -409,15 +405,12 @@ class PrivateRouteAuthenticationTests(unittest.TestCase):
         self.assertNotIn("private internal detail", response.text)
 
     def test_upload_preserves_intentional_http_exception_and_cleans_partial_file(self):
-        self.build_rag_mock.side_effect = HTTPException(status_code=503, detail="Processing unavailable")
+        self.process_document_mock.side_effect = HTTPException(status_code=503, detail="Processing unavailable")
         cookies, _ = self._auth_cookies()
         response = self._upload(cookies=cookies)
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"], "Processing unavailable")
-        self.assertEqual(
-            list((Path(self.temp_dir.name) / "documents" / "user_7").glob("*.pdf")),
-            [],
-        )
+        self.assertFalse(list(Path(self.temp_dir.name).glob("**/*.pdf")))
 
 
 if __name__ == "__main__":

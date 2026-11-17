@@ -1,13 +1,19 @@
 import json
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from .embedder import get_embedding_configuration
+from .chunker import get_chunking_configuration
 
-EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-CALIBRATION_PATH = Path(__file__).with_name("retrieval_calibration.json")
+
+CALIBRATION_PATH = Path(__file__).with_name("retrieval_calibration.gemini.json")
+DISTANCE_CONVENTION = "euclidean_l2_unsquared"
+RETRIEVAL_TOP_K = 5
+CALIBRATION_DATASET_VERSION = "gemini-retrieval-eval-1.0.0"
 
 
 @dataclass(frozen=True)
@@ -88,13 +94,45 @@ def Get_calibrated_relevance_threshold() -> float:
     try:
         with CALIBRATION_PATH.open("r", encoding="utf-8") as file:
             settings = json.load(file)
-        if settings.get("embedding_model") != EMBEDDING_MODEL_NAME:
-            raise ValueError("Retrieval calibration does not match the embedding model")
-        if settings.get("metric") != "squared_l2":
-            raise ValueError("Retrieval calibration does not match the FAISS metric")
-        threshold = float(settings["max_squared_l2_distance"])
-        if not math.isfinite(threshold) or threshold < 0:
+        configuration = get_embedding_configuration().as_dict()
+        expected = {
+            "provider": configuration["provider"],
+            "model": configuration["model"],
+            "embedding_provider": configuration["provider"],
+            "embedding_model": configuration["model"],
+            "dimensions": configuration["dimensions"],
+            "document_task_type": configuration["document_task_type"],
+            "query_task_type": configuration["query_task_type"],
+            "normalization": configuration["normalization"],
+            "metric": configuration["distance_metric"],
+            "distance_convention": DISTANCE_CONVENTION,
+            "chunking": get_chunking_configuration(),
+            "retrieval_top_k": RETRIEVAL_TOP_K,
+        }
+        if any(settings.get(key) != value for key, value in expected.items()):
+            raise ValueError("Retrieval calibration does not match the active embedding configuration")
+        if (
+            settings.get("calibration_status") != "calibrated"
+            or not isinstance(settings.get("calibration_metrics"), dict)
+            or not isinstance(settings.get("validation_metrics"), dict)
+            or
+            not isinstance(settings.get("dataset_version"), str)
+            or settings["dataset_version"] != CALIBRATION_DATASET_VERSION
+            or not isinstance(settings.get("dataset_sha256"), str)
+            or len(settings["dataset_sha256"]) != 64
+            or any(char not in "0123456789abcdef" for char in settings["dataset_sha256"].lower())
+            or not isinstance(settings.get("calibrated_at_utc"), str)
+            or not settings["calibrated_at_utc"].strip()
+        ):
+            raise ValueError("Retrieval calibration dataset metadata is invalid")
+        calibrated_at = datetime.fromisoformat(settings["calibrated_at_utc"].replace("Z", "+00:00"))
+        if calibrated_at.tzinfo is None:
+            raise ValueError("Retrieval calibration timestamp must include a timezone")
+        threshold = float(settings["max_distance"])
+        if not math.isfinite(threshold) or threshold < 0 or threshold > 2.0001:
             raise ValueError("Retrieval calibration threshold is invalid")
+        if settings.get("threshold_comparison") != "<=":
+            raise ValueError("Retrieval calibration threshold comparison is incompatible")
         return threshold
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise RuntimeError("A valid RAG relevance calibration is required") from error

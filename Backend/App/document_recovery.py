@@ -1,84 +1,73 @@
-"""Small single-instance recovery for interrupted synchronous document work."""
-
+"""Recover interrupted synchronous PostgreSQL document lifecycle work."""
 import logging
-from datetime import datetime, timezone
+import tempfile
+from contextlib import ExitStack
+from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, exists, select
 
 from .database import SessionLocal
-from .models import Document, User
-from Rag.user_storage import DOCUMENTS_ROOT, Get_user_paths
-from Rag.vector_store import (
-    Cleanup_vector_store_temporary_files,
-    _atomic_json,
-    _load_version,
-    _manifest,
-)
-
+from .models import AnswerCache, Document, DocumentChunk
+from .upload_storage import blocking_file_lock
 
 logger = logging.getLogger(__name__)
+TEMP_UPLOAD_ROOT = Path(tempfile.gettempdir()) / "learning-assistant-uploads"
+LOCK_ROOT = Path(tempfile.gettempdir()) / "learning-assistant-locks"
 
 
 def recover_interrupted_document_work() -> None:
-    """Mark crashed ingestions retryable and remove abandoned temporary files."""
-    with SessionLocal() as session:
-        user_ids = set(session.scalars(select(User.ID)).all())
-        interrupted = session.scalars(
-            select(Document).where(Document.status == "PROCESSING")
-        ).all()
-        recovered_at = datetime.now(timezone.utc)
-        for document in interrupted:
-            document.status = "FAILED"
-            document.updated_at = recovered_at
-        session.commit()
+    """Recover lifecycle state while holding locks for any active upload.
 
+    Startup invokes this before serving requests. Acquiring existing per-user OS
+    locks also makes recovery wait for an upload from another process that began
+    before recovery. The deployment still assumes one backend process; concurrent
+    independent processes starting recovery are not a supported deployment mode.
+    """
     try:
-        documents_root = DOCUMENTS_ROOT.resolve()
-    except OSError:
-        logger.warning("document_recovery storage_root_unavailable=root")
-        return
+        with SessionLocal() as session:
+            processing_users = session.scalars(
+                select(Document.user_id).where(Document.status == "PROCESSING").distinct()
+            ).all()
+        lock_paths = {path for path in LOCK_ROOT.glob("user-*.lock")} if LOCK_ROOT.exists() else set()
+        lock_paths.update(LOCK_ROOT / f"user-{user_id}.lock" for user_id in processing_users)
+        with ExitStack() as locks:
+            for lock_path in sorted(lock_paths):
+                locks.enter_context(blocking_file_lock(lock_path))
+            with SessionLocal() as session:
+                session.execute(
+                    Document.__table__.update().where(Document.status == "PROCESSING")
+                    .values(status="FAILED")
+                )
+                session.execute(
+                    Document.__table__.update().where(
+                        Document.status == "READY",
+                        ~exists(select(DocumentChunk.id).where(DocumentChunk.document_id == Document.id)),
+                    ).values(status="FAILED")
+                )
+                deleting_ids = session.execute(select(Document.id, Document.user_id).where(
+                    Document.status == "DELETING"
+                )).all()
+                for document_id, user_id in deleting_ids:
+                    session.execute(delete(AnswerCache).where(AnswerCache.user_id == user_id))
+                    session.execute(delete(Document).where(
+                        Document.id == document_id, Document.user_id == user_id,
+                        Document.status == "DELETING",
+                    ))
+                session.commit()
 
-    for user_id in user_ids:
-        documents_dir, _ = Get_user_paths(user_id)
-        try:
-            Cleanup_vector_store_temporary_files(user_id)
-            _, storage_dir = Get_user_paths(user_id)
-            manifest_path = storage_dir / "manifest.json"
-            previous = storage_dir / "manifest.previous.json"
-            if manifest_path.exists() or previous.exists():
-                import json
-                try:
-                    active = _manifest(storage_dir)
-                    if active is None and previous.exists():
-                        raise ValueError("active manifest is missing")
-                    if active is not None and active["active_version"] is not None:
-                        _load_version(storage_dir, active["active_version"], user_id)
-                except (OSError, ValueError, TypeError, KeyError):
-                    try:
-                        backup = json.loads(previous.read_text(encoding="utf-8"))
-                        if not isinstance(backup, dict):
-                            raise ValueError("invalid backup manifest")
-                        version = backup.get("active_version")
-                        if backup.get("schema_version") != 1:
-                            raise ValueError("invalid backup schema")
-                        if version is not None:
-                            _load_version(storage_dir, version, user_id)
-                        _atomic_json(manifest_path, backup)
-                    except (OSError, ValueError, TypeError, KeyError):
-                        logger.warning("document_recovery index_manifest_unrecoverable user_id=%s", user_id)
-            if not documents_dir.exists():
-                continue
-            resolved_dir = documents_dir.resolve()
-            if resolved_dir.parent != documents_root:
-                logger.warning("document_recovery skipped_storage_path user_id=%s", user_id)
-                continue
-            for staged_file in resolved_dir.glob(".upload-*.part"):
-                if staged_file.is_file() and staged_file.resolve().parent == resolved_dir:
-                    staged_file.unlink(missing_ok=True)
-        except OSError as error:
-            logger.warning(
-                "document_recovery cleanup_failed user_id=%s error_type=%s",
-                user_id,
-                type(error).__name__,
-            )
+            # Only clean files after all existing upload locks are held, otherwise
+            # recovery could unlink a PDF that an active upload is still reading.
+            _clean_temporary_uploads()
+    except Exception as error:
+        logger.warning("document_recovery database_cleanup_failed error_type=%s", type(error).__name__)
+        raise
 
+
+def _clean_temporary_uploads() -> None:
+    try:
+        if TEMP_UPLOAD_ROOT.exists():
+            for path in TEMP_UPLOAD_ROOT.glob("upload-*.pdf"):
+                if path.is_file() and path.resolve().parent == TEMP_UPLOAD_ROOT.resolve():
+                    path.unlink(missing_ok=True)
+    except OSError as error:
+        logger.warning("document_recovery temporary_upload_cleanup_failed error_type=%s", type(error).__name__)

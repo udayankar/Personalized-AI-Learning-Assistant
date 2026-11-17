@@ -265,3 +265,6 @@ def validate_production_configuration(settings: SecuritySettings) -> None:
     )
     if not provider_key or provider_key.lower().startswith(placeholder_prefixes):
         raise ValueError("LLM_API_KEY must contain a configured provider key in production")
+
+    from Rag.embedder import get_embedding_configuration
+    get_embedding_configuration()

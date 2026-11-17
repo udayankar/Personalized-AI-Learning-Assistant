@@ -3,10 +3,12 @@ from starlette.concurrency import run_in_threadpool
 from ..schemas import Query_Chat , Query_Ans
 from ..oauth2 import get_current_user
 from Rag.rag import Ask_question, RAGProcessingError
+from ..rate_limit import user_rate_limit
 
 router = APIRouter(prefix="/chat" , tags=["Chat"])
 
-@router.post("/query" , response_model=Query_Ans)
+@router.post("/query" , response_model=Query_Ans,
+             dependencies=[Depends(user_rate_limit("chat"))])
 async def Give_Query(payload : Query_Chat, current_user = Depends(get_current_user)) :
     try:
         result = await run_in_threadpool(Ask_question, payload.query, current_user.ID)

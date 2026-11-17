@@ -10,5 +10,5 @@ venv/
 .DS_Store
 Thumbs.db
 .pytest_cache/
-Storage/
-Data/Documents/
+.cache/retrieval-evaluation/
+reports/

@@ -9,8 +9,8 @@ from App.models import Document
 
 from . import answer_cache, generator
 from .answering import Validate_claim_verification, Validate_evidence_assessment
-from .vector_store import Load_vector_store, Retrieve
-from .embedder import model
+from .vector_store import Load_ready_chunk_metadata, Retrieve
+from .embedder import embedding_provider
 from .relevance import Get_calibrated_relevance_threshold
 from .generator import (
     Assess_document_evidence,
@@ -37,7 +37,7 @@ class RAGProcessingError(RuntimeError):
 def get_ready_document_hashes(user_id: int) -> dict[str, str]:
     with SessionLocal() as session:
         rows = session.execute(
-            select(Document.storage_filename, Document.sha256).where(
+            select(Document.id, Document.sha256).where(
                 Document.user_id == user_id,
                 Document.status == "READY",
             )
@@ -286,7 +286,7 @@ def _answer_from_cache(payload):
 
 
 def _ask_question(question, user_id: int):
-    index, chunks = Load_vector_store(user_id)
+    chunks = Load_ready_chunk_metadata(user_id)
     ready_document_hashes = get_ready_document_hashes(user_id)
     ready_document_ids = set(ready_document_hashes)
     cache_key = None
@@ -318,7 +318,7 @@ def _ask_question(question, user_id: int):
                 return _answer_from_cache(cached)
             logger.info("answer_cache outcome=%s lookup_ms=%.2f", reason, lookup_ms)
         else:
-            logger.info("answer_cache outcome=bypass reason=index_missing_ready_document")
+            logger.info("answer_cache outcome=bypass reason=ready_document_chunk_missing")
     except Exception as error:
         logger.warning(
             "answer_cache outcome=fingerprint_unavailable error_type=%s",
@@ -328,20 +328,19 @@ def _ask_question(question, user_id: int):
 
     retrieval = Retrieve(
         question,
-        index,
-        chunks,
-        model,
+        embedding_provider,
         user_id,
         k=5,
         allowed_document_ids=ready_document_ids,
     )
     gemini_call_count = [0]
-    if not retrieval.chunks:
+    if not retrieval.relevant_chunks:
         reason = NO_SUFFICIENT_DOCUMENT_EVIDENCE
         if not ready_document_hashes and not _user_has_documents(user_id):
             reason = NO_DOCUMENTS_UPLOADED
         result = _no_information_result(reason)
     else:
+        retrieval = replace(retrieval, chunks=retrieval.relevant_chunks)
         result, fallback_reason = _document_answer(
             question, retrieval, gemini_call_count
         )

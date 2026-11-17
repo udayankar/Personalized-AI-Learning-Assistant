@@ -22,15 +22,14 @@ for _module_name in (
 ):
     sys.modules.pop(_module_name, None)
 
-sentence_transformers_stub = types.ModuleType("sentence_transformers")
-sentence_transformers_stub.SentenceTransformer = lambda *_args, **_kwargs: Mock()
+
+
 with patch.dict(os.environ, {"LLM_API_KEY": "unit-test-key"}):
-    with patch.dict(sys.modules, {"sentence_transformers": sentence_transformers_stub}):
-        from App.base import Base
-        from App.models import AnswerCache, User
-        from App.schemas import Query_Ans
-        from App.database import engine as application_engine
-        from Rag import answer_cache, rag, user_storage, vector_store
+    from App.base import Base
+    from App.models import AnswerCache, User, Document, DocumentChunk
+    from App.schemas import Query_Ans
+    from App.database import engine as application_engine
+    from Rag import answer_cache, rag, user_storage, vector_store
 
 
 class ExactAnswerCacheTests(unittest.TestCase):
@@ -39,6 +38,17 @@ class ExactAnswerCacheTests(unittest.TestCase):
         self.assertTrue(application_engine.hide_parameters)
 
     def setUp(self):
+        self.calibration_patch = patch.object(vector_store, "Get_calibrated_relevance_threshold", return_value=1.0)
+        self.calibration_patch.start()
+        self.addCleanup(self.calibration_patch.stop)
+        self.rag_calibration_patch = patch.object(rag, "Get_calibrated_relevance_threshold", return_value=1.0)
+        self.rag_calibration_patch.start()
+        self.addCleanup(self.rag_calibration_patch.stop)
+        self.store_config_patch = patch.object(vector_store, "get_embedding_configuration", return_value=types.SimpleNamespace(
+            dimensions=2, distance_metric="squared_l2", as_dict=lambda: {"provider": "test", "dimensions": 2}
+        ))
+        self.store_config_patch.start()
+        self.addCleanup(self.store_config_patch.stop)
         self.temp_dir = TemporaryDirectory()
         root = Path(self.temp_dir.name)
         self.documents_patch = patch.object(user_storage, "DOCUMENTS_ROOT", root / "documents")
@@ -58,6 +68,9 @@ class ExactAnswerCacheTests(unittest.TestCase):
         self.session_factory_patch = patch.object(answer_cache, "SessionLocal", self.Session)
         self.session_factory_patch.start()
         self.addCleanup(self.session_factory_patch.stop)
+        self.vector_session_patch = patch.object(vector_store, "SessionLocal", self.Session)
+        self.vector_session_patch.start()
+        self.addCleanup(self.vector_session_patch.stop)
         self.addCleanup(self.engine.dispose)
         with self.Session() as session:
             session.add_all([
@@ -66,7 +79,10 @@ class ExactAnswerCacheTests(unittest.TestCase):
             ])
             session.commit()
 
-        rag.model = types.SimpleNamespace(encode=lambda _query: np.array([0.0, 0.0]))
+        rag.embedding_provider = types.SimpleNamespace(embed_query=lambda _query: np.array([1.0] + [0.0] * 767))
+        self.retrieve_patch = patch.object(rag, "Retrieve", side_effect=self._retrieve)
+        self.retrieve_patch.start()
+        self.addCleanup(self.retrieve_patch.stop)
         self.ready_document_hashes = {}
         self.ready_document_hashes_patch = patch.object(
             rag, "get_ready_document_hashes",
@@ -117,7 +133,38 @@ class ExactAnswerCacheTests(unittest.TestCase):
         }
         if vectors is None:
             vectors = np.array([[0.1, 0.0] for _ in chunks], dtype="float32")
-        vector_store.Save_vector_store(vector_store.Create_vector_store(vectors), chunks, user_id)
+        with self.Session() as session:
+            for document_id in grouped_text:
+                document = session.get(Document, document_id)
+                if document is None:
+                    document = Document(
+                        id=document_id, user_id=user_id, filename=document_id,
+                        storage_filename=f"{document_id}-{user_id}", file_size_bytes=1,
+                        page_count=1, sha256=self.ready_document_hashes[user_id][document_id], status="READY",
+                    )
+                    session.add(document)
+                    session.flush()
+                session.query(DocumentChunk).filter_by(document_id=document_id).delete()
+                for index, chunk in enumerate(item for item in chunks if item.get("document_id", item.get("source")) == document_id):
+                    vector = np.asarray(vectors[chunks.index(chunk)], dtype="float32").reshape(-1)
+                    vector = np.pad(vector, (0, max(0, 768 - vector.size)))[:768]
+                    norm = np.linalg.norm(vector)
+                    vector = vector / norm if norm else np.eye(1, 768, 0, dtype="float32")[0]
+                    session.add(DocumentChunk(
+                        user_id=user_id, document_id=document_id, chunk_index=index,
+                        text=chunk["text"], page_number=chunk.get("page"), embedding=vector.tolist(),
+                        embedding_provider="test", embedding_model="test-model", embedding_dimensions=768,
+                        embedding_task_type="RETRIEVAL_DOCUMENT",
+                    ))
+            session.commit()
+
+    def _retrieve(self, query, _embedder, user_id, k=5, allowed_document_ids=None):
+        chunks = vector_store.Load_ready_chunk_metadata(user_id)
+        if allowed_document_ids is not None:
+            chunks = [chunk for chunk in chunks if chunk["document_id"] in allowed_document_ids]
+        for chunk in chunks[:k]:
+            chunk["distance"] = 0.1
+        return vector_store.Make_retrieval_result(query, user_id, chunks[:k], 1.0)
 
     def cache_count(self):
         with self.Session() as session:
@@ -203,7 +250,10 @@ class ExactAnswerCacheTests(unittest.TestCase):
     def test_deleted_cached_source_invalidates_document_answer(self):
         self.save_chunks(71, [self.chunk("old.pdf", "Relevant source passage", 71)])
         first = rag.Ask_question("What does the source say?", 71)
-        vector_store.Remove_vector_store(71)
+        with self.Session() as session:
+            session.delete(session.get(Document, "old.pdf"))
+            session.commit()
+        self.ready_document_hashes[71] = {}
 
         second = rag.Ask_question("What does the source say?", 71)
 
