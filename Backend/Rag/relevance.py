@@ -16,6 +16,10 @@ RETRIEVAL_TOP_K = 5
 CALIBRATION_DATASET_VERSION = "gemini-retrieval-eval-1.0.0"
 
 
+class CalibrationError(RuntimeError):
+    """The required retrieval calibration is absent or incompatible."""
+
+
 @dataclass(frozen=True)
 class RetrievalChunk:
     document_id: str
@@ -89,11 +93,32 @@ def Calibrate_distance_threshold(samples: list[tuple[float, bool]]) -> tuple[flo
     return threshold, metrics
 
 
+def _has_valid_metrics(metrics: dict[str, Any]) -> bool:
+    numeric_values = []
+    def visit(value):
+        if isinstance(value, bool) or value is None or isinstance(value, str):
+            return
+        if isinstance(value, (int, float)):
+            numeric_values.append(value)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+        else:
+            raise ValueError("Calibration metrics contain an unsupported value")
+    visit(metrics)
+    return bool(numeric_values) and all(math.isfinite(float(value)) for value in numeric_values)
+
+
 @lru_cache(maxsize=1)
 def Get_calibrated_relevance_threshold() -> float:
     try:
         with CALIBRATION_PATH.open("r", encoding="utf-8") as file:
             settings = json.load(file)
+        if not isinstance(settings, dict):
+            raise ValueError("Calibration root must be a JSON object")
         configuration = get_embedding_configuration().as_dict()
         expected = {
             "provider": configuration["provider"],
@@ -109,12 +134,15 @@ def Get_calibrated_relevance_threshold() -> float:
             "chunking": get_chunking_configuration(),
             "retrieval_top_k": RETRIEVAL_TOP_K,
         }
-        if any(settings.get(key) != value for key, value in expected.items()):
-            raise ValueError("Retrieval calibration does not match the active embedding configuration")
+        for key, value in expected.items():
+            if settings.get(key) != value:
+                raise ValueError(f"Calibration field '{key}' does not match the active configuration")
         if (
             settings.get("calibration_status") != "calibrated"
             or not isinstance(settings.get("calibration_metrics"), dict)
+            or not _has_valid_metrics(settings["calibration_metrics"])
             or not isinstance(settings.get("validation_metrics"), dict)
+            or not _has_valid_metrics(settings["validation_metrics"])
             or
             not isinstance(settings.get("dataset_version"), str)
             or settings["dataset_version"] != CALIBRATION_DATASET_VERSION
@@ -128,14 +156,19 @@ def Get_calibrated_relevance_threshold() -> float:
         calibrated_at = datetime.fromisoformat(settings["calibrated_at_utc"].replace("Z", "+00:00"))
         if calibrated_at.tzinfo is None:
             raise ValueError("Retrieval calibration timestamp must include a timezone")
-        threshold = float(settings["max_distance"])
+        raw_threshold = settings["max_distance"]
+        if isinstance(raw_threshold, bool) or not isinstance(raw_threshold, (int, float)):
+            raise ValueError("Calibration threshold must be a JSON number")
+        threshold = float(raw_threshold)
         if not math.isfinite(threshold) or threshold < 0 or threshold > 2.0001:
             raise ValueError("Retrieval calibration threshold is invalid")
         if settings.get("threshold_comparison") != "<=":
             raise ValueError("Retrieval calibration threshold comparison is incompatible")
         return threshold
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise RuntimeError("A valid RAG relevance calibration is required") from error
+        raise CalibrationError(
+            f"A valid RAG relevance calibration for Gemini is required at '{CALIBRATION_PATH}': {error}"
+        ) from error
 
 
 def Make_retrieval_result(

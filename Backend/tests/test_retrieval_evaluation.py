@@ -163,8 +163,8 @@ class GeminiRetrievalEvaluationTests(unittest.TestCase):
             "chunking": chunker.get_chunking_configuration(), "retrieval_top_k": 5,
             "dataset_version": relevance.CALIBRATION_DATASET_VERSION, "dataset_sha256": "b" * 64,
             "calibrated_at_utc": "2026-01-01T00:00:00+00:00",
-            "calibration_status": "calibrated", "calibration_metrics": {},
-            "validation_metrics": {}, "max_distance": .5, "threshold_comparison": "<=",
+            "calibration_status": "calibrated", "calibration_metrics": {"precision": 1.0},
+            "validation_metrics": {"precision": 1.0}, "max_distance": .5, "threshold_comparison": "<=",
         }
         mutations = {
             "embedding_provider": "sentence-transformers",
@@ -196,6 +196,40 @@ class GeminiRetrievalEvaluationTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     relevance.Get_calibrated_relevance_threshold()
             relevance.Get_calibrated_relevance_threshold.cache_clear()
+
+    def test_calibration_rejects_nonfinite_metrics_and_invalid_thresholds(self):
+        config = embedder.get_embedding_configuration()
+        base = {
+            **config.as_dict(), "embedding_provider": config.provider,
+            "embedding_model": config.model, "dimensions": config.dimensions,
+            "metric": config.distance_metric, "distance_convention": "euclidean_l2_unsquared",
+            "chunking": chunker.get_chunking_configuration(), "retrieval_top_k": 5,
+            "dataset_version": relevance.CALIBRATION_DATASET_VERSION, "dataset_sha256": "c" * 64,
+            "calibrated_at_utc": "2026-01-01T00:00:00+00:00",
+            "calibration_status": "calibrated", "calibration_metrics": {"precision": 1.0},
+            "validation_metrics": {"precision": 1.0}, "max_distance": .5, "threshold_comparison": "<=",
+        }
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "calibration.json"
+            for key, value in (("max_distance", float("nan")), ("max_distance", -0.1),
+                               ("max_distance", True),
+                               ("validation_metrics", {"precision": float("inf")})):
+                path.write_text(json.dumps({**base, key: value}), encoding="utf-8")
+                with patch.object(relevance, "CALIBRATION_PATH", path):
+                    relevance.Get_calibrated_relevance_threshold.cache_clear()
+                    with self.assertRaises(relevance.CalibrationError):
+                        relevance.Get_calibrated_relevance_threshold()
+            relevance.Get_calibrated_relevance_threshold.cache_clear()
+
+    def test_missing_calibration_error_names_expected_path(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "missing.json"
+            with patch.object(relevance, "CALIBRATION_PATH", path):
+                relevance.Get_calibrated_relevance_threshold.cache_clear()
+                with self.assertRaises(relevance.CalibrationError) as raised:
+                    relevance.Get_calibrated_relevance_threshold()
+                self.assertIn(str(path), str(raised.exception))
+                relevance.Get_calibrated_relevance_threshold.cache_clear()
 
 
 if __name__ == "__main__":

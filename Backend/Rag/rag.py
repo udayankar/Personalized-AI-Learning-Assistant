@@ -296,9 +296,13 @@ def _ask_question(question, user_id: int):
         if isinstance(chunk, dict) and chunk.get("user_id", user_id) == user_id
         and isinstance(chunk.get("document_id", chunk.get("source")), str)
     })
+    # Calibration is required retrieval configuration, not an optional cache input.
+    # Resolve it before entering the cache-only error handling path so failures
+    # retain their true calibration context and cannot be mislabeled as cache errors.
+    relevance_threshold = Get_calibrated_relevance_threshold()
     try:
         pipeline_version = answer_cache.Pipeline_fingerprint(
-            generator, Get_calibrated_relevance_threshold()
+            generator, relevance_threshold
         )
         context_fingerprint = answer_cache.Knowledge_base_fingerprint(
             user_id, ready_document_hashes, pipeline_version
@@ -321,8 +325,8 @@ def _ask_question(question, user_id: int):
             logger.info("answer_cache outcome=bypass reason=ready_document_chunk_missing")
     except Exception as error:
         logger.warning(
-            "answer_cache outcome=fingerprint_unavailable error_type=%s",
-            type(error).__name__,
+            "answer_cache outcome=bypass reason=fingerprint_error error_type=%s",
+            type(error).__name__, exc_info=True,
         )
         cache_key = None
 

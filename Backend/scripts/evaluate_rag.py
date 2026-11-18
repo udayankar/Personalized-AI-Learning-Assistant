@@ -5,6 +5,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -488,7 +489,22 @@ def evaluate(dataset=None, cache_path=CACHE_PATH, execute=False, write_calibrati
             "ranking_metrics": result["ranking_metrics"],
             "distance_distributions": result["distance_distributions"],
         }
-        CALIBRATION_PATH.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+        # Stage the complete artifact beside its destination, then atomically
+        # publish without replacing an artifact created by another process.
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=CALIBRATION_PATH.parent,
+                prefix=CALIBRATION_PATH.name + ".", suffix=".tmp", delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(json.dumps(artifact, indent=2) + "\n")
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.link(temporary_path, CALIBRATION_PATH)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
         result["calibration_artifact"] = str(CALIBRATION_PATH.relative_to(BACKEND_DIR))
     return result
 

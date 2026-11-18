@@ -1,7 +1,10 @@
+import json
 import os
+import tempfile
 import types
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -109,18 +112,25 @@ class GeminiEmbeddingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must be 768"):
                 embedder.get_embedding_configuration()
 
-    def test_existing_minilm_calibration_fails_closed(self):
-        relevance.Get_calibrated_relevance_threshold.cache_clear()
-
     def test_minilm_calibration_is_rejected_and_runtime_has_no_faiss_loader(self):
         self.assertFalse(hasattr(vector_store, "faiss"))
         self.assertFalse(hasattr(vector_store, "Load_vector_store"))
-        legacy_minilm = relevance.CALIBRATION_PATH.with_name("retrieval_calibration.json")
-        with patch.object(relevance, "CALIBRATION_PATH", legacy_minilm):
-            relevance.Get_calibrated_relevance_threshold.cache_clear()
-            with self.assertRaisesRegex(RuntimeError, "valid RAG relevance calibration"):
-                relevance.Get_calibrated_relevance_threshold()
-            relevance.Get_calibrated_relevance_threshold.cache_clear()
+        with tempfile.TemporaryDirectory() as directory:
+            legacy_minilm = Path(directory) / "retrieval_calibration.json"
+            legacy_minilm.write_text(json.dumps({
+                "provider": "sentence-transformers",
+                "model": "all-MiniLM-L6-v2",
+                "embedding_provider": "sentence-transformers",
+                "embedding_model": "all-MiniLM-L6-v2",
+                "dimensions": 384,
+            }), encoding="utf-8")
+            with patch.object(relevance, "CALIBRATION_PATH", legacy_minilm):
+                relevance.Get_calibrated_relevance_threshold.cache_clear()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, "valid RAG relevance calibration"):
+                        relevance.Get_calibrated_relevance_threshold()
+                finally:
+                    relevance.Get_calibrated_relevance_threshold.cache_clear()
 
     def test_cache_fingerprint_changes_with_embedding_configuration(self):
         original = embedder.get_embedding_configuration()
