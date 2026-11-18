@@ -11,7 +11,7 @@ from google.genai import types
 load_dotenv()
 
 MODEL_NAME = "gemini-3.6-flash"
-GEMINI_REQUEST_TIMEOUT_MS = 15_000
+GEMINI_REQUEST_TIMEOUT_MS = 45_000
 logger = logging.getLogger(__name__)
 client = genai.Client(
     api_key=os.getenv("LLM_API_KEY"),
