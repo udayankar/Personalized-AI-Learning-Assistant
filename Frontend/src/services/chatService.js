@@ -27,6 +27,7 @@ import apiClient from './apiClient';
  * @returns {Promise<{ answer: string, answer_mode: string, message: string|null, reliability: string, claims: Array, sources: Array }>}
  */
 export async function sendQuery(query) {
-  const response = await apiClient.post('/chat/query', { query });
+  // Retrieval and multiple Gemini operations may take several minutes.
+  const response = await apiClient.post('/chat/query', { query }, { timeout: 900000 });
   return response.data;
 }

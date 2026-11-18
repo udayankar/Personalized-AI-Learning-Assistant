@@ -333,9 +333,9 @@ class ExactAnswerCacheTests(unittest.TestCase):
         self.assertEqual(result.answer, rag.NO_DOCUMENTS_MESSAGE)
         self.assertEqual(self.cache_count(), 1)
 
-    def test_transient_document_assessment_failure_is_reported_and_not_cached(self):
+    def test_transient_answer_generation_failure_is_reported_and_not_cached(self):
         self.save_chunks(71, [self.chunk("notes.pdf", "Relevant passage", 71)])
-        self.assess.side_effect = RuntimeError("temporary provider failure")
+        self.generate.side_effect = RuntimeError("temporary provider failure")
 
         with self.assertRaises(rag.RAGProcessingError):
             rag.Ask_question("A question", 71)

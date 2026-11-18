@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from App.database import SessionLocal
 from App.models import Document, DocumentChunk
-from .relevance import Get_calibrated_relevance_threshold, Make_retrieval_result
+from .relevance import Get_calibrated_relevance_threshold, Make_retrieval_result  # calibration is offline only
 from .embedder import get_embedding_configuration
 
 
@@ -48,7 +48,8 @@ def Insert_document_chunks(session, document: Document, chunks: list[dict], embe
 def Retrieve(query, embedder, user_id: int, k=5, allowed_document_ids=None):
     if isinstance(user_id, bool) or not isinstance(user_id, int) or user_id <= 0:
         raise ValueError("A valid authenticated user ID is required")
-    threshold = Get_calibrated_relevance_threshold()
+    # No distance cutoff: always pass nearest retrieved passages to grounding.
+    threshold = 2.0
     if k <= 0:
         return Make_retrieval_result(query, user_id, [], threshold)
     if allowed_document_ids is not None and not allowed_document_ids:

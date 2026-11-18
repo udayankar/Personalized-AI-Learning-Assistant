@@ -19,7 +19,7 @@ class GeminiEmbeddingTests(unittest.TestCase):
             client.models.embed_content.side_effect = side_effect
         else:
             client.models.embed_content.return_value = response
-        return embedder.GeminiEmbedder(client=client, sleep=Mock(), jitter=lambda *_: 0), client
+        return embedder.GeminiEmbedder(client=client), client
 
     def response(self, count=1):
         return types.SimpleNamespace(embeddings=[types.SimpleNamespace(values=[3.0] + [4.0] + [0.0] * 766) for _ in range(count)])
@@ -61,43 +61,43 @@ class GeminiEmbeddingTests(unittest.TestCase):
         with self.assertRaises(embedder.EmbeddingProviderError):
             provider.embed_query("question")
 
-    def test_retryable_errors_are_bounded_and_permanent_errors_are_not_retried(self):
+    def test_provider_errors_are_not_retried(self):
         transient = RuntimeError("temporary")
         transient.code = 503
         provider, client = self.make_provider(side_effect=[transient] * 4)
-        with self.assertRaisesRegex(embedder.EmbeddingProviderError, "retry limit"):
+        with self.assertRaisesRegex(embedder.EmbeddingProviderError, "request failed"):
             provider.embed_query("question")
-        self.assertEqual(client.models.embed_content.call_count, 4)
+        self.assertEqual(client.models.embed_content.call_count, 1)
 
         permanent = RuntimeError("invalid request")
         permanent.code = 400
         provider, client = self.make_provider(side_effect=permanent)
-        with self.assertRaisesRegex(embedder.EmbeddingProviderError, "permanently"):
+        with self.assertRaisesRegex(embedder.EmbeddingProviderError, "request failed"):
             provider.embed_query("question")
         self.assertEqual(client.models.embed_content.call_count, 1)
 
-    def test_quota_retry_respects_retry_after_and_timeout_retries(self):
+    def test_quota_and_timeout_fail_once_without_repeating_embedding_requests(self):
         quota = RuntimeError("quota")
         quota.code = 429
         quota.response = types.SimpleNamespace(headers={"Retry-After": "3"})
         provider, client = self.make_provider(side_effect=[quota, self.response()])
-        provider.embed_query("question")
-        self.assertEqual(provider._sleep.call_args.args, (3.0,))
-        self.assertEqual(client.models.embed_content.call_count, 2)
+        with self.assertRaises(embedder.EmbeddingProviderError):
+            provider.embed_query("question")
+        self.assertEqual(client.models.embed_content.call_count, 1)
 
         timeout = TimeoutError("network timed out")
         provider, client = self.make_provider(side_effect=[timeout, self.response()])
-        provider.embed_query("question")
-        self.assertEqual(client.models.embed_content.call_count, 2)
+        with self.assertRaises(embedder.EmbeddingProviderError):
+            provider.embed_query("question")
+        self.assertEqual(client.models.embed_content.call_count, 1)
 
     def test_quota_429_without_retry_after_stops_without_repeated_calls(self):
         quota = RuntimeError("quota exhausted")
         quota.code = 429
         provider, client = self.make_provider(side_effect=[quota, self.response()])
-        with self.assertRaisesRegex(embedder.EmbeddingProviderError, "quota exhaustion"):
+        with self.assertRaisesRegex(embedder.EmbeddingProviderError, "request failed"):
             provider.embed_query("question")
         self.assertEqual(client.models.embed_content.call_count, 1)
-        provider._sleep.assert_not_called()
 
     def test_startup_does_not_create_client_without_api_key(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -106,6 +106,15 @@ class GeminiEmbeddingTests(unittest.TestCase):
             with self.assertRaisesRegex(embedder.EmbeddingProviderError, "LLM_API_KEY is required"):
                 provider.embed_query("question")
             self.assertIsNone(provider.client)
+
+    def test_embedding_client_uses_finite_900_second_timeout_without_sdk_retries(self):
+        with patch.dict(os.environ, {"LLM_API_KEY": "unit-test-key"}), \
+             patch.object(embedder.genai, "Client") as create_client:
+            provider = embedder.GeminiEmbedder()
+            provider._get_client()
+        http_options = create_client.call_args.kwargs["http_options"]
+        self.assertEqual(http_options.timeout, 900_000)
+        self.assertEqual(http_options.retry_options.attempts, 1)
 
     def test_configuration_rejects_unsupported_dimensions(self):
         with patch.dict(os.environ, {"EMBEDDING_DIMENSIONS": "1536"}):

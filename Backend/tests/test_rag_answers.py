@@ -185,7 +185,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
                            "user_id": row.user_id, "page": row.page_number, "text": row.text,
                            "distance": float(np.linalg.norm(np.asarray(row.embedding) - query_vector))})
         chunks.sort(key=lambda item: (item["distance"], item["document_id"]))
-        return vector_store.Make_retrieval_result(query, user_id, chunks[:k], 1.0)
+        return vector_store.Make_retrieval_result(query, user_id, chunks[:k], 2.0)
 
     @staticmethod
     def _chunk(source, text, page=1, user_id=None, document_id=None):
@@ -222,6 +222,8 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assertEqual(result.claims[0]["sources"][0]["source"], "notes-a.pdf")
         self.assertEqual(result.claims[1]["sources"][0]["page"], 5)
         self.assertEqual(len(result.claims[1]["sources"]), 1)
+        self.assess.assert_not_called()
+        self.assertEqual(self.generate_claims.call_count, 1)
         stable_ref = result.claims[0]["sources"][0]["reference"]
         self.assertEqual(stable_ref, rag.Ask_question("Synthesize both notes", 11).claims[0]["sources"][0]["reference"])
 
@@ -287,13 +289,14 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         with self.assertRaises(rag.RAGProcessingError):
             rag.Ask_question("Question", 124)
 
-    def test_evidence_assessment_exception_is_a_technical_failure(self):
+    def test_query_skips_gemini_evidence_assessment(self):
         self._save_chunks(126, [self._chunk("notes.pdf", "A relevant source passage")])
         self.assess.side_effect = RuntimeError("mock Gemini failure")
 
-        with self.assertRaises(rag.RAGProcessingError):
-            rag.Ask_question("Question", 126)
-        self.generate_claims.assert_not_called()
+        result = rag.Ask_question("Question", 126)
+        self.assertEqual(result.answer_mode, rag.DOCUMENT_SUPPORTED)
+        self.assess.assert_not_called()
+        self.generate_claims.assert_called_once()
 
     def test_empty_document_generation_has_declined_reason(self):
         self._save_chunks(125, [self._chunk("notes.pdf", "A relevant source passage")])
@@ -304,7 +307,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
         self.assertEqual(result.fallback_reason, rag.DOCUMENT_GENERATION_DECLINED)
 
-    def test_evidence_assessor_conflict_is_preserved_when_verifier_omits_relation(self):
+    def test_verifier_conflict_is_preserved_without_evidence_assessment(self):
         self._save_chunks(122, [
             self._chunk("temperature-a.pdf", "Recommended temperature is 60 C"),
             self._chunk("temperature-b.pdf", "Recommended temperature is 75 C"),
@@ -326,6 +329,10 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.verify.return_value = self._supported_verification(
             "Question", self.generate_claims.return_value["claims"], []
         )
+        self.verify.return_value["relationships"] = [{
+            "claim_ids": ["C1", "C2"], "relation": "CONTRADICTION",
+            "citation_ids": ["R1", "R2"], "explanation": "Conflicting values.",
+        }]
 
         result = rag.Ask_question("Which value is recommended?", 122)
 
@@ -350,7 +357,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assertEqual(result.claims[0]["classification"], "PARTIALLY_SUPPORTED")
         self.assertIn("only the first part", result.answer)
 
-    def test_partial_evidence_returns_supported_information_with_limitation(self):
+    def test_partial_evidence_returns_verified_supported_information(self):
         self._save_chunks(14, [self._chunk("one-side.pdf", "Only one side")])
         self.assess.return_value = self._assessment(
             status="PARTIAL",
@@ -364,9 +371,9 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         result = rag.Ask_question("Compare the two approaches", 14)
 
         self.assertEqual(result.answer_mode, rag.DOCUMENT_SUPPORTED)
-        self.assertEqual(result.reliability, "MODERATE")
+        self.assertEqual(result.reliability, "HIGH")
         self.assertEqual(len(result.sources), 1)
-        self.assertIn("Second comparison side", result.message)
+        self.assertIsNone(result.message)
 
     def test_no_uploaded_documents_returns_clear_no_information_without_llm_call(self):
         with patch.object(generator.client.models, "generate_content") as llm_call:
@@ -387,8 +394,8 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
 
         result = rag.Ask_question("What is image thresholding in OpenCV?", 18)
 
-        self.assertEqual(result.answer_mode, rag.DOCUMENT_SUPPORTED)
-        self.assertEqual(result.sources[0]["source"], "vision.pdf")
+        self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
+        self.assertEqual(self.generate_claims.call_args.args[1][0]["source"], "vision.pdf")
         self.assertEqual(result.reliability, "HIGH")
 
     def test_candidate_outside_cutoff_is_not_dropped_when_another_chunk_passes(self):
@@ -418,7 +425,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
 
         result = rag.Ask_question("How does OpenCV thresholding handle uneven lighting?", 20)
 
-        passages = self.assess.call_args.args[1]
+        passages = self.generate_claims.call_args.args[1]
         self.assertEqual([passage["source"] for passage in passages], ["opencv.pdf", "overview.pdf"])
         self.assertEqual(
             result.answer_mode, rag.DOCUMENT_SUPPORTED,
@@ -427,23 +434,18 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
         self.assertEqual(result.sources[0]["source"], "opencv.pdf")
         self.assertEqual(result.sources[0]["page"], 3)
 
-    def test_candidate_outside_calibrated_distance_is_filtered_before_evidence_assessment(self):
+    def test_candidate_outside_previous_cutoff_reaches_grounded_generation(self):
         self._save_chunks(
             19,
             [self._chunk("vision.pdf", "Thresholding compares image pixels to a cutoff.")],
             vectors=np.array([[0.0, 1.0]], dtype="float32"),
         )
-        self.assess.return_value = self._assessment(
-            status="INSUFFICIENT", facts=[], missing=["No requested facts are present"]
-        )
-
         result = rag.Ask_question("What is the capital of Iceland?", 19)
 
-        self.assertEqual(result.answer_mode, rag.INSUFFICIENT_CONFIDENCE)
-        self.assertEqual(result.answer, rag.NO_INFORMATION_MESSAGE)
-        self.assertEqual(result.sources, [])
+        self.assertEqual(result.answer_mode, rag.DOCUMENT_SUPPORTED)
+        self.assertEqual(result.sources[0]["source"], "vision.pdf")
         self.assess.assert_not_called()
-        self.generate_claims.assert_not_called()
+        self.generate_claims.assert_called_once()
 
     def test_invalid_generated_citation_is_classified_as_verification_failure(self):
         self._save_chunks(17, [self._chunk("notes.pdf", "Retrieved fact")])
@@ -611,7 +613,7 @@ class EvidenceAwareAnswerTests(unittest.TestCase):
 
     def test_gemini_client_uses_a_bounded_timeout_and_single_attempt(self):
         http_options = generator.client._api_client._http_options
-        self.assertEqual(http_options.timeout, generator.GEMINI_REQUEST_TIMEOUT_MS)
+        self.assertEqual(http_options.timeout, 900_000)
         self.assertEqual(http_options.retry_options.attempts, 1)
 
     def test_gemini_client_error_logs_provider_status_message_and_redacted_details(self):

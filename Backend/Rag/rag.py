@@ -6,14 +6,14 @@ from dataclasses import dataclass, replace
 from sqlalchemy import select
 from App.database import SessionLocal
 from App.models import Document
-
 from . import answer_cache, generator
-from .answering import Validate_claim_verification, Validate_evidence_assessment
+from .answering import Validate_claim_verification
+from .answering import Validate_evidence_assessment
 from .vector_store import Load_ready_chunk_metadata, Retrieve
 from .embedder import embedding_provider
 from .relevance import Get_calibrated_relevance_threshold
 from .generator import (
-    Assess_document_evidence,
+    Assess_document_evidence,  # Offline evaluation helper; not called by the query path.
     Generate_claims,
     Verify_document_claims,
 )
@@ -171,35 +171,7 @@ def _document_answer(question, retrieval, gemini_call_count=None):
     try:
         if gemini_call_count is not None:
             gemini_call_count[0] += 1
-        raw_assessment = Assess_document_evidence(question, passages)
-    except Exception as error:
-        logger.warning(
-            "rag_processing_failure stage=evidence_assessment error_type=%s",
-            type(error).__name__,
-        )
-        raise RAGProcessingError("Document evidence assessment failed") from error
-    assessment = Validate_evidence_assessment(raw_assessment, reference_documents)
-    if assessment is None:
-        logger.warning(
-            "rag_processing_failure stage=evidence_assessment error_type=InvalidResponse"
-        )
-        raise RAGProcessingError("Document evidence assessment returned an invalid response")
-    covered_facts = [
-        fact for fact in assessment.required_facts if fact["reference_ids"]
-    ]
-    if not assessment.sufficient and not covered_facts:
-        return None, NO_SUFFICIENT_DOCUMENT_EVIDENCE
-
-    assessment_payload = {
-        "coverage_status": assessment.coverage_status,
-        "required_facts": list(assessment.required_facts),
-        "missing_facts": list(assessment.missing_facts),
-        "relationships": list(assessment.relationships),
-    }
-    try:
-        if gemini_call_count is not None:
-            gemini_call_count[0] += 1
-        generated = Generate_claims(question, passages, assessment_payload)
+        generated = Generate_claims(question, passages)
     except Exception as error:
         logger.warning(
             "rag_processing_failure stage=answer_generation error_type=%s",
@@ -224,28 +196,12 @@ def _document_answer(question, retrieval, gemini_call_count=None):
         claims,
         verification,
         reference_documents,
-        evidence_relationships=assessment.relationships,
+        evidence_relationships=(),
     )
     if verified is None:
         return None, CITATION_VERIFICATION_FAILED
     if verified.reliability == "LOW":
         return None, DOCUMENT_ANSWER_UNRELIABLE
-
-    if assessment.coverage_status != "COMPLETE" or assessment.missing_facts:
-        missing = [
-            fact.strip()[:300] for fact in assessment.missing_facts
-            if isinstance(fact, str) and fact.strip()
-        ][:5]
-        limitation = "The documents cover only part of the question."
-        if missing:
-            limitation += " I could not find information about: " + "; ".join(missing) + "."
-        else:
-            limitation += " Unsupported details have been omitted."
-        verified = replace(
-            verified,
-            reliability="MODERATE" if verified.reliability == "HIGH" else verified.reliability,
-            disclosure=(f"{verified.disclosure} {limitation}" if verified.disclosure else limitation),
-        )
 
     sources = [reference_map[ref] for ref in verified.citations]
     source_by_ref = reference_map
@@ -296,13 +252,9 @@ def _ask_question(question, user_id: int):
         if isinstance(chunk, dict) and chunk.get("user_id", user_id) == user_id
         and isinstance(chunk.get("document_id", chunk.get("source")), str)
     })
-    # Calibration is required retrieval configuration, not an optional cache input.
-    # Resolve it before entering the cache-only error handling path so failures
-    # retain their true calibration context and cannot be mislabeled as cache errors.
-    relevance_threshold = Get_calibrated_relevance_threshold()
     try:
         pipeline_version = answer_cache.Pipeline_fingerprint(
-            generator, relevance_threshold
+            generator
         )
         context_fingerprint = answer_cache.Knowledge_base_fingerprint(
             user_id, ready_document_hashes, pipeline_version

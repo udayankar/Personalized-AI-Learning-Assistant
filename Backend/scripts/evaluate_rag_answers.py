@@ -90,7 +90,7 @@ def evaluate_live_sample():
         raise RuntimeError("LLM_API_KEY is not configured")
     generator.client = genai.Client(
         api_key=api_key,
-        http_options=types.HttpOptions(timeout=20000),
+        http_options=types.HttpOptions(timeout=900_000),
     )
 
     examples = [

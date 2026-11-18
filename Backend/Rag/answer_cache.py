@@ -16,7 +16,7 @@ from .chunker import get_chunking_configuration
 
 logger = logging.getLogger(__name__)
 DEFAULT_TTL_SECONDS = 24 * 60 * 60
-PIPELINE_VERSION = "rag-pgvector-exact-l2-v6"
+PIPELINE_VERSION = "rag-pgvector-top-k-grounded-v7"
 
 def _ttl_seconds() -> int:
     value = os.getenv("ANSWER_CACHE_TTL_SECONDS", str(DEFAULT_TTL_SECONDS))
@@ -37,7 +37,7 @@ def Normalize_query(query: str) -> str:
 def Query_hash(query: str) -> str:
     return hashlib.sha256(Normalize_query(query).encode("utf-8")).hexdigest()
 
-def Pipeline_fingerprint(generator, relevance_threshold: float) -> str:
+def Pipeline_fingerprint(generator, _legacy_relevance_threshold=None) -> str:
     payload = {
         "version": PIPELINE_VERSION,
         "generator_model": getattr(generator, "MODEL_NAME", "unknown"),
@@ -50,7 +50,7 @@ def Pipeline_fingerprint(generator, relevance_threshold: float) -> str:
         "chunking": get_chunking_configuration(),
         "retrieval_metric": get_embedding_configuration().distance_metric,
         "retrieval_top_k": 5,
-        "relevance_threshold": float(relevance_threshold),
+        "relevance_filter": "disabled; top-k passages are evaluated by claim verification",
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

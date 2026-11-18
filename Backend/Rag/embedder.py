@@ -1,18 +1,10 @@
-"""Small Gemini-backed embedding interface for document and query vectors."""
 import logging
 import math
 import os
-import random
-import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-
 import numpy as np
-import httpx
 from google import genai
 from google.genai import types
-
 
 logger = logging.getLogger(__name__)
 DEFAULT_PROVIDER = "gemini"
@@ -23,9 +15,8 @@ QUERY_TASK = "RETRIEVAL_QUERY"
 DISTANCE_METRIC = "l2"
 NORMALIZATION = "l2_unit"
 MAX_BATCH_SIZE = 100
-MAX_ATTEMPTS = 4
-REQUEST_TIMEOUT_MS = 15_000
-
+MAX_ATTEMPTS = 1
+REQUEST_TIMEOUT_MS = 900_000
 
 @dataclass(frozen=True)
 class EmbeddingConfiguration:
@@ -75,11 +66,9 @@ class EmbeddingProviderError(RuntimeError):
 
 
 class GeminiEmbedder:
-    def __init__(self, client=None, configuration=None, *, sleep=time.sleep, jitter=random.uniform):
+    def __init__(self, client=None, configuration=None):
         self.configuration = configuration or get_embedding_configuration()
         self.client = client
-        self._sleep = sleep
-        self._jitter = jitter
 
     def embed_documents(self, texts):
         return self._embed_many(texts, DOCUMENT_TASK)
@@ -119,36 +108,24 @@ class GeminiEmbedder:
         return np.asarray(output, dtype="float32")
 
     def _request(self, batch, task_type):
-        for attempt in range(MAX_ATTEMPTS):
-            try:
-                return self._get_client().models.embed_content(
-                    model=self.configuration.model,
-                    contents=list(batch),
-                    config=types.EmbedContentConfig(
-                        task_type=task_type,
-                        output_dimensionality=self.configuration.dimensions,
-                    ),
-                )
-            except EmbeddingProviderError:
-                raise
-            except Exception as error:
-                status = getattr(error, "code", None) or getattr(error, "status_code", None)
-                retryable = status in (429, 500, 502, 503, 504) or isinstance(
-                    error, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError)
-                )
-                if not retryable:
-                    raise EmbeddingProviderError("Gemini embedding request failed permanently") from error
-                retry_after = _retry_after_seconds(error)
-                if status == 429 and retry_after is None:
-                    raise EmbeddingProviderError(
-                        "Gemini returned 429 without Retry-After; treating it as quota exhaustion"
-                    ) from error
-                if attempt + 1 >= MAX_ATTEMPTS:
-                    raise EmbeddingProviderError("Gemini embedding request exhausted its retry limit") from error
-                delay = retry_after if retry_after is not None else min(0.5 * (2 ** attempt), 4.0) + self._jitter(0.0, 0.25)
-                logger.warning("gemini_embedding_retry attempt=%d status=%s delay_seconds=%.2f", attempt + 1, status, delay)
-                self._sleep(delay)
-        raise AssertionError("unreachable")
+        try:
+            return self._get_client().models.embed_content(
+                model=self.configuration.model,
+                contents=list(batch),
+                config=types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=self.configuration.dimensions,
+                ),
+            )
+        except EmbeddingProviderError:
+            raise
+        except Exception as error:
+            status = getattr(error, "code", None) or getattr(error, "status_code", None)
+            logger.error(
+                "gemini_embedding_failed model=%s task_type=%s http_status=%s error_type=%s",
+                self.configuration.model, task_type, status, type(error).__name__,
+            )
+            raise EmbeddingProviderError("Gemini embedding request failed") from error
 
     def _get_client(self):
         if self.client is None:
@@ -164,27 +141,7 @@ class GeminiEmbedder:
             )
         return self.client
 
-
-def _retry_after_seconds(error):
-    headers = getattr(getattr(error, "response", None), "headers", None) or getattr(error, "headers", None)
-    if not headers:
-        return None
-    value = headers.get("Retry-After") or headers.get("retry-after")
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        try:
-            retry_at = parsedate_to_datetime(str(value))
-            if retry_at.tzinfo is None:
-                retry_at = retry_at.replace(tzinfo=timezone.utc)
-            seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
-        except (TypeError, ValueError, OverflowError):
-            return None
-    return min(max(0.0, seconds), 30.0) if math.isfinite(seconds) else None
-
-
 embedding_provider = GeminiEmbedder()
-
 
 def Create_embeddings(chunks):
     return embedding_provider.embed_documents([chunk["text"] for chunk in chunks])

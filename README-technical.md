@@ -182,11 +182,11 @@ The cache lookup follows loading the user's READY chunk provenance and document 
 2. `pypdf` extracts text from pages. Pages with no extractable text do not produce chunks.
 3. The local character splitter divides each page into chunks up to 1,000 characters with 200-character overlap; page and filename metadata are retained.
 4. Gemini creates 768-dimensional normalized `RETRIEVAL_DOCUMENT` embeddings. Chunks, vectors, and the transition to `READY` are committed together in PostgreSQL.
-5. A question is embedded with `RETRIEVAL_QUERY`; pgvector's `<->` operator runs exact L2 search restricted to the authenticated user's READY documents, returning at most five chunks. The matching calibration cutoff is required before retrieval.
-6. Gemini assesses coverage, drafts claims from the retrieved passages, and separately verifies claims against their cited passages. The backend constructs citations from those retrieved passages and drops or qualifies claims according to verification.
+5. A question is embedded with `RETRIEVAL_QUERY`; pgvector's `<->` operator runs exact L2 search restricted to the authenticated user's READY documents, returning at most five chunks. Runtime does not apply a calibrated distance cutoff.
+6. Gemini drafts claims directly from the retrieved passages and separately verifies each claim against its cited passages. The backend constructs citations from those retrieved passages and drops or qualifies claims according to verification.
 7. If there is no relevant support or the generated claims cannot be verified, the API returns a no-information response. If an external model call fails, the API returns HTTP 503 instead of disguising the failure as missing information.
 
-The checked-in cutoff was calibrated using MiniLM and is rejected by runtime. The synthetic evaluation fixture is small; run the Gemini evaluation and review its validation scores before publishing a matching calibration artifact. It does not establish a reliable production threshold by itself.
+The checked-in calibration artifact is retained for offline retrieval evaluation only and is not required by runtime.
 
 PostgreSQL is the source of truth for document metadata, chunks, vectors, and answer cache. Upload failures roll back all chunks; incomplete `PROCESSING` documents are marked `FAILED` at startup. Deletion marks the document `DELETING`, invalidates that user's cache, and deletes the document and its chunks in a transaction. Original PDFs exist only in a temporary upload path during processing.
 
@@ -216,7 +216,7 @@ A cache lookup occurs after current chunk provenance and READY-document hashes a
 - **API:** Python, FastAPI, Pydantic, SQLAlchemy, PyJWT, `pwdlib`.
 - **Database and migrations:** PostgreSQL, SQLAlchemy, Alembic.
 - **Document/RAG:** `pypdf`, local character chunking, Google Gen AI SDK embeddings, PostgreSQL with pgvector.
-- **Generation:** Google Gen AI SDK and Gemini (`gemini-3.6-flash`, as configured in the current source).
+- **Generation:** Google Gen AI SDK and Gemini (`gemini-3.6-flash`, as configured in the current source). Runtime generation and embedding requests have a finite 900-second client timeout; Gemini provider-side deadlines can still return HTTP 504.
 - **Storage:** PostgreSQL stores document metadata, text chunks, vectors, and answer cache; PDFs are temporary processing files only.
 
 ### Development and tests
@@ -401,7 +401,7 @@ python scripts/evaluate_rag.py
 python scripts/evaluate_rag_answers.py
 ```
 
-The retrieval evaluator calls the configured Gemini embedding API and therefore requires `LLM_API_KEY`; it makes provider requests. It writes a calibration artifact only when explicitly run with `--write-calibration`; review results before replacing the artifact. The checked-in calibration was generated with `all-MiniLM-L6-v2` and is rejected by runtime. The bundled 40-case synthetic retrieval set is a smoke evaluation, not a reliable production calibration; establish a representative held-out dataset before enabling calibrated Gemini retrieval. No application startup Gemini call is made.
+The retrieval evaluator calls the configured Gemini embedding API and therefore requires `LLM_API_KEY`; it makes provider requests. It writes a calibration artifact only when explicitly run with `--write-calibration`; review results before replacing the artifact. The checked-in calibration is for offline evaluation only; runtime retrieval does not apply a distance cutoff. The bundled 40-case synthetic retrieval set is a smoke evaluation, not a reliable production calibration. No application startup Gemini call is made.
 
 The answer evaluator is deterministic and makes no Gemini calls. It tests validators against manually authored answer/verifier fixtures. Both evaluation datasets are small and synthetic; their metrics are not measurements of live Gemini accuracy or real student outcomes. The optional `python scripts/evaluate_rag_answers.py --live-sample` makes live Gemini requests using four synthetic examples and may incur API usage.
 
