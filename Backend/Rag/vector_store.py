@@ -109,7 +109,7 @@ def Retrieve(query, embedder, user_id: int, k=5, allowed_document_ids=None):
             "text": row.text,
             "distance": value,
         })
-    return Make_retrieval_result(query, user_id, chunks, threshold)
+    return Make_retrieval_result(query, user_id, chunks, 1.00)
 
 
 def Load_ready_chunk_metadata(user_id: int) -> list[dict]:
